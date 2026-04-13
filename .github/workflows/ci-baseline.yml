@@ -1,0 +1,51 @@
+name: CI Baseline
+
+on:
+  workflow_call:
+
+jobs:
+  pr-title:
+    name: PR Title (Conventional Commits)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check PR title format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|chore|docs|refactor|test|ci)(\(.+\))?: .+'; then
+            echo "❌ PR title must follow Conventional Commits format."
+            echo "   Expected: feat|fix|chore|docs|refactor|test|ci: <description>"
+            echo "   Got: $PR_TITLE"
+            exit 1
+          fi
+          echo "✅ PR title OK: $PR_TITLE"
+
+  branch-name:
+    name: Branch Naming
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if ! echo "$BRANCH" | grep -qE '^(main|feat/.+|fix/.+|chore/.+|ci/.+|docs/.+|gt-.+)$'; then
+            echo "❌ Branch name does not match required pattern."
+            echo "   Allowed: main, feat/*, fix/*, chore/*, ci/*, docs/*, gt-*"
+            echo "   Got: $BRANCH"
+            exit 1
+          fi
+          echo "✅ Branch name OK: $BRANCH"
+
+  secret-scan:
+    name: Secret Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

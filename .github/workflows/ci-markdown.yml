@@ -1,0 +1,61 @@
+name: CI Markdown
+
+on:
+  workflow_call:
+
+jobs:
+  link-check:
+    name: Broken Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >
+            --verbose
+            --no-progress
+            --exclude-loopback
+            --exclude-private
+            --exclude "^mailto:"
+            --exclude "^https://github.com/e0da/"
+            '**/*.md'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  yaml-frontmatter:
+    name: YAML Frontmatter Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate YAML frontmatter in .md files
+        run: |
+          failed=0
+          for f in $(find . -name "*.md" -not -path "./.git/*"); do
+            # Check if file starts with frontmatter delimiter
+            if head -1 "$f" | grep -q '^---$'; then
+              # Extract frontmatter block
+              block=$(awk '/^---$/{if(++c==2) exit} c' "$f")
+              if [ -z "$block" ]; then
+                echo "❌ $f: Unclosed frontmatter block (missing closing ---)"
+                failed=1
+              else
+                # Validate YAML syntax using Python (always available on ubuntu runners)
+                if ! python3 -c "
+          import sys, yaml
+          content = open('$f').read()
+          parts = content.split('---', 2)
+          if len(parts) >= 3:
+              yaml.safe_load(parts[1])
+          " 2>/dev/null; then
+                  echo "❌ $f: Invalid YAML frontmatter"
+                  failed=1
+                else
+                  echo "✅ $f"
+                fi
+              fi
+            fi
+          done
+          exit $failed

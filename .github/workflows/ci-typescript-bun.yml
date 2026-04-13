@@ -1,0 +1,52 @@
+name: CI TypeScript (Bun)
+
+on:
+  workflow_call:
+
+jobs:
+  build-and-test:
+    name: Lint / Build / Check / Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: |
+          if bun run --silent lint 2>/dev/null; then
+            echo "✅ Lint passed"
+          elif cat package.json | grep -q '"lint"'; then
+            echo "❌ Lint script exists but failed" && exit 1
+          else
+            echo "⏭️ No lint script — skipping"
+          fi
+
+      - name: Build
+        run: |
+          if cat package.json | grep -q '"build"'; then
+            bun run build
+          else
+            echo "⏭️ No build script — skipping"
+          fi
+
+      - name: Type check
+        run: |
+          if cat package.json | grep -q '"check"'; then
+            bun run check
+          else
+            echo "⏭️ No check script — skipping"
+          fi
+
+      - name: Test
+        run: |
+          if find . -name "*.test.ts" -o -name "*.test.tsx" -o -name "*.spec.ts" -o -name "*.spec.tsx" 2>/dev/null | grep -q .; then
+            bun test
+          else
+            echo "⏭️ No test files found — skipping"
+          fi
