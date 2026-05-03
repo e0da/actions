@@ -55,7 +55,7 @@ on:
         type: string
         default: ""
       env-file-format:
-        description: "Format of the sops-encrypted env file: dotenv | yaml. yaml requires yaml2env helper inside repo."
+        description: "sops input format: dotenv (raw KEY=val), yaml (KEY: val pairs decoded via sops --output-type=dotenv), yaml-helper (KEY: val pairs piped through stack-path/yaml2env.py)."
         required: false
         type: string
         default: "dotenv"
@@ -149,8 +149,11 @@ jobs:
               sops --decrypt "$enc" > "$out"
               ;;
             yaml)
+              sops --decrypt --output-type=dotenv "$enc" > "$out"
+              ;;
+            yaml-helper)
               if [[ ! -x "${stack_path}/yaml2env.py" ]]; then
-                echo "yaml format requires ${stack_path}/yaml2env.py helper" >&2
+                echo "yaml-helper format requires ${stack_path}/yaml2env.py helper" >&2
                 exit 1
               fi
               sops --decrypt "$enc" | python3 "${stack_path}/yaml2env.py" > "$out"
