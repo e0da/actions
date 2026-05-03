@@ -217,6 +217,7 @@ jobs:
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
           DOCKER_CONFIG: ${{ steps.docker-config.outputs.dir }}
+          DOCKER_HOST: unix:///Users/e0da/.docker/run/docker.sock
         run: |
           set -euo pipefail
           cd "${{ inputs.stack-path }}"
@@ -229,6 +230,7 @@ jobs:
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
           DOCKER_CONFIG: ${{ steps.docker-config.outputs.dir }}
+          DOCKER_HOST: unix:///Users/e0da/.docker/run/docker.sock
         run: |
           set -euo pipefail
           cd "${{ inputs.stack-path }}"
@@ -241,6 +243,7 @@ jobs:
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
           DOCKER_CONFIG: ${{ steps.docker-config.outputs.dir }}
+          DOCKER_HOST: unix:///Users/e0da/.docker/run/docker.sock
         run: |
           set -euo pipefail
           cd "${{ inputs.stack-path }}"
