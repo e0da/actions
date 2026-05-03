@@ -188,6 +188,10 @@ jobs:
           # Bypass the host's credsStore (Docker Desktop credential helper hangs
           # in non-GUI launchd context). Use an ephemeral DOCKER_CONFIG dir with
           # an explicit auth entry for ghcr.io built from GITHUB_TOKEN.
+          #
+          # Docker resolves cli-plugins (e.g. compose) under DOCKER_CONFIG/cli-plugins,
+          # so symlink the host's cli-plugins dir into our ephemeral config so
+          # `docker compose` is still discoverable.
           dc="$(mktemp -d -t docker-config-XXXX)"
           token_b64="$(printf '%s:%s' "${GITHUB_ACTOR}" "${GH_TOKEN}" | base64)"
           cat > "$dc/config.json" <<JSON
@@ -198,6 +202,12 @@ jobs:
           }
           JSON
           chmod 600 "$dc/config.json"
+          if [[ -d "$HOME/.docker/cli-plugins" ]]; then
+            ln -s "$HOME/.docker/cli-plugins" "$dc/cli-plugins"
+            echo "symlinked cli-plugins from $HOME/.docker/cli-plugins"
+          else
+            echo "warning: $HOME/.docker/cli-plugins not found; docker compose may be unavailable" >&2
+          fi
           echo "dir=$dc" >> "$GITHUB_OUTPUT"
           echo "wrote ephemeral DOCKER_CONFIG at $dc"
 
