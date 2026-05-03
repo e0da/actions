@@ -123,6 +123,33 @@ jobs:
             echo "label '$required' NOT present on merging PR; apply skipped"
           fi
 
+      - name: Refresh stack working tree
+        if: inputs.archetype != 'A'
+        shell: bash
+        env:
+          PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          # Ensure the on-disk repo containing stack-path is current before
+          # docker compose reads compose.yaml. The deploy-compose reusable
+          # workflow operates on a long-lived working tree on puck rather
+          # than a fresh checkout, so refresh it explicitly. Find the git
+          # root by walking up from stack-path.
+          stack_path="${{ inputs.stack-path }}"
+          if [[ ! -d "$stack_path" ]]; then
+            echo "stack-path does not exist on runner: $stack_path" >&2
+            exit 1
+          fi
+          repo_root="$(cd "$stack_path" && git rev-parse --show-toplevel 2>/dev/null || true)"
+          if [[ -z "$repo_root" ]]; then
+            echo "warning: $stack_path is not inside a git repo; skipping refresh" >&2
+            exit 0
+          fi
+          cd "$repo_root"
+          git fetch --quiet origin main
+          git reset --hard origin/main
+          echo "$repo_root synced to $(git rev-parse --short HEAD)"
+
       - name: Download artifact (archetype A)
         if: inputs.archetype == 'A' && inputs.artifact-name != ''
         uses: actions/download-artifact@v4
@@ -152,7 +179,7 @@ jobs:
               sops --decrypt --output-type=dotenv "$enc" > "$out"
               ;;
             yaml-helper)
-              if [[ ! -x "${stack_path}/yaml2env.py" ]]; then
+              if [[ ! -f "${stack_path}/yaml2env.py" ]]; then
                 echo "yaml-helper format requires ${stack_path}/yaml2env.py helper" >&2
                 exit 1
               fi
