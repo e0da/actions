@@ -1,0 +1,246 @@
+name: Deploy Compose Service
+
+# Reusable workflow that deploys an e0da/stack service on the puck self-hosted
+# runner. Implements ADR-016 archetypes A/B/C/D.
+#
+# Archetypes:
+#   A — static-bind:   rsync a build artifact directory into a host bind path
+#                      (no container restart needed; bind-mount is live).
+#   B — ghcr-image:    docker compose pull && up -d --wait (image built upstream).
+#   C — local-build:   docker compose build && up -d --wait (Dockerfile in tree).
+#   D — upstream-only: docker compose pull && up -d --wait (upstream image).
+#
+# Secrets handling: if `env-file-encrypted` is set, the file is sops-decrypted
+# on the runner using the in-place age key, written to `<stack-path>/.env`,
+# and removed via trap on exit. Plaintext .env never leaves the runner host.
+#
+# Stateful gating: when `require-approval-label` is non-empty, the apply
+# step is skipped unless the merging PR carries that label. The build/pull
+# step always runs. This satisfies ADR-016 §"stateful exception" for
+# nats and redis.
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Service name (matches stack/<service>/ directory)"
+        required: true
+        type: string
+      archetype:
+        description: "Deploy archetype: A | B | C | D"
+        required: true
+        type: string
+      stack-path:
+        description: "Absolute path on puck containing compose.yaml"
+        required: true
+        type: string
+      artifact-name:
+        description: "Name of the uploaded build artifact (archetype A only)"
+        required: false
+        type: string
+        default: ""
+      artifact-source-dir:
+        description: "Subdirectory of the downloaded artifact to rsync (archetype A)"
+        required: false
+        type: string
+        default: "."
+      bind-target:
+        description: "Absolute target path on puck for rsync (archetype A only)"
+        required: false
+        type: string
+        default: ""
+      env-file-encrypted:
+        description: "Path to sops-encrypted env file relative to stack-path (e.g. .env.enc.yaml). Empty = no env decryption."
+        required: false
+        type: string
+        default: ""
+      env-file-format:
+        description: "Format of the sops-encrypted env file: dotenv | yaml. yaml requires yaml2env helper inside repo."
+        required: false
+        type: string
+        default: "dotenv"
+      require-approval-label:
+        description: "If non-empty, the apply step only runs when the merging PR carries this label. Build/pull always runs."
+        required: false
+        type: string
+        default: ""
+      healthcheck-command:
+        description: "Optional shell command to verify service health post-deploy. Non-zero exit fails the job."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.service }}
+    runs-on: [self-hosted, puck]
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Validate archetype
+        shell: bash
+        run: |
+          case "${{ inputs.archetype }}" in
+            A|B|C|D) echo "archetype=${{ inputs.archetype }}" ;;
+            *) echo "invalid archetype: ${{ inputs.archetype }}" >&2; exit 1 ;;
+          esac
+
+      - name: Validate archetype-specific inputs
+        shell: bash
+        run: |
+          arch="${{ inputs.archetype }}"
+          if [[ "$arch" == "A" ]]; then
+            if [[ -z "${{ inputs.artifact-name }}" || -z "${{ inputs.bind-target }}" ]]; then
+              echo "archetype A requires both artifact-name and bind-target" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Resolve approval gate
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          required="${{ inputs.require-approval-label }}"
+          if [[ -z "$required" ]]; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+            echo "no approval label required; apply enabled"
+            exit 0
+          fi
+          # Find merging PR for this commit (if any). On push events the head
+          # commit's associated PR carries the labels.
+          sha="${GITHUB_SHA}"
+          repo="${GITHUB_REPOSITORY}"
+          labels="$(gh api "/repos/${repo}/commits/${sha}/pulls" --jq '.[].labels[].name' 2>/dev/null || true)"
+          if echo "$labels" | grep -qx "$required"; then
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+            echo "label '$required' present on merging PR; apply enabled"
+          else
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+            echo "label '$required' NOT present on merging PR; apply skipped"
+          fi
+
+      - name: Download artifact (archetype A)
+        if: inputs.archetype == 'A' && inputs.artifact-name != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: _artifact
+
+      - name: Decrypt env file
+        if: inputs.env-file-encrypted != ''
+        shell: bash
+        env:
+          SOPS_AGE_KEY_FILE: /Users/e0da/.config/sops/age/keys.txt
+        run: |
+          set -euo pipefail
+          stack_path="${{ inputs.stack-path }}"
+          enc="${stack_path}/${{ inputs.env-file-encrypted }}"
+          out="${stack_path}/.env"
+          if [[ ! -f "$enc" ]]; then
+            echo "encrypted env file not found: $enc" >&2
+            exit 1
+          fi
+          case "${{ inputs.env-file-format }}" in
+            dotenv)
+              sops --decrypt "$enc" > "$out"
+              ;;
+            yaml)
+              if [[ ! -x "${stack_path}/yaml2env.py" ]]; then
+                echo "yaml format requires ${stack_path}/yaml2env.py helper" >&2
+                exit 1
+              fi
+              sops --decrypt "$enc" | python3 "${stack_path}/yaml2env.py" > "$out"
+              ;;
+            *)
+              echo "unsupported env-file-format: ${{ inputs.env-file-format }}" >&2
+              exit 1
+              ;;
+          esac
+          chmod 600 "$out"
+          echo "decrypted env to $out"
+
+      - name: Apply (archetype A — static-bind rsync)
+        if: inputs.archetype == 'A' && steps.gate.outputs.apply == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ inputs.bind-target }}"
+          source="_artifact/${{ inputs.artifact-source-dir }}"
+          mkdir -p "$target"
+          rsync -av --delete "${source%/}/" "${target%/}/"
+          echo "rsynced $source → $target"
+
+      - name: Apply (archetype B — ghcr image pull + up)
+        if: inputs.archetype == 'B' && steps.gate.outputs.apply == 'true'
+        shell: bash
+        env:
+          PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          cd "${{ inputs.stack-path }}"
+          docker compose pull
+          docker compose up -d --wait
+
+      - name: Apply (archetype C — local build + up)
+        if: inputs.archetype == 'C' && steps.gate.outputs.apply == 'true'
+        shell: bash
+        env:
+          PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          cd "${{ inputs.stack-path }}"
+          docker compose build
+          docker compose up -d --wait
+
+      - name: Apply (archetype D — upstream image pull + up)
+        if: inputs.archetype == 'D' && steps.gate.outputs.apply == 'true'
+        shell: bash
+        env:
+          PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          cd "${{ inputs.stack-path }}"
+          docker compose pull
+          docker compose up -d --wait
+
+      - name: Apply skipped (gated)
+        if: steps.gate.outputs.apply != 'true'
+        shell: bash
+        run: |
+          echo "::notice::Apply skipped: required approval label '${{ inputs.require-approval-label }}' not present on merging PR. Build/pull still completed."
+
+      - name: Healthcheck
+        if: inputs.healthcheck-command != '' && steps.gate.outputs.apply == 'true'
+        shell: bash
+        env:
+          PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
+        run: |
+          set -euo pipefail
+          cd "${{ inputs.stack-path }}"
+          ${{ inputs.healthcheck-command }}
+
+      - name: Cleanup decrypted env
+        if: always() && inputs.env-file-encrypted != ''
+        shell: bash
+        run: |
+          rm -f "${{ inputs.stack-path }}/.env"
+          echo "removed decrypted env"
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Deploy: ${{ inputs.service }}"
+            echo ""
+            echo "- archetype: ${{ inputs.archetype }}"
+            echo "- stack-path: \`${{ inputs.stack-path }}\`"
+            echo "- apply: ${{ steps.gate.outputs.apply }}"
+            if [[ -n "${{ inputs.require-approval-label }}" ]]; then
+              echo "- gate: \`${{ inputs.require-approval-label }}\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
