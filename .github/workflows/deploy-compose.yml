@@ -177,11 +177,36 @@ jobs:
           rsync -av --delete "${source%/}/" "${target%/}/"
           echo "rsynced $source → $target"
 
+      - name: Prepare ephemeral DOCKER_CONFIG
+        if: inputs.archetype != 'A' && steps.gate.outputs.apply == 'true'
+        id: docker-config
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Bypass the host's credsStore (Docker Desktop credential helper hangs
+          # in non-GUI launchd context). Use an ephemeral DOCKER_CONFIG dir with
+          # an explicit auth entry for ghcr.io built from GITHUB_TOKEN.
+          dc="$(mktemp -d -t docker-config-XXXX)"
+          token_b64="$(printf '%s:%s' "${GITHUB_ACTOR}" "${GH_TOKEN}" | base64)"
+          cat > "$dc/config.json" <<JSON
+          {
+            "auths": {
+              "ghcr.io": { "auth": "${token_b64}" }
+            }
+          }
+          JSON
+          chmod 600 "$dc/config.json"
+          echo "dir=$dc" >> "$GITHUB_OUTPUT"
+          echo "wrote ephemeral DOCKER_CONFIG at $dc"
+
       - name: Apply (archetype B — ghcr image pull + up)
         if: inputs.archetype == 'B' && steps.gate.outputs.apply == 'true'
         shell: bash
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
+          DOCKER_CONFIG: ${{ steps.docker-config.outputs.dir }}
         run: |
           set -euo pipefail
           cd "${{ inputs.stack-path }}"
@@ -193,6 +218,7 @@ jobs:
         shell: bash
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
+          DOCKER_CONFIG: ${{ steps.docker-config.outputs.dir }}
         run: |
           set -euo pipefail
           cd "${{ inputs.stack-path }}"
@@ -204,11 +230,18 @@ jobs:
         shell: bash
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
+          DOCKER_CONFIG: ${{ steps.docker-config.outputs.dir }}
         run: |
           set -euo pipefail
           cd "${{ inputs.stack-path }}"
           docker compose pull
           docker compose up -d --wait
+
+      - name: Cleanup ephemeral DOCKER_CONFIG
+        if: always() && steps.docker-config.outputs.dir != ''
+        shell: bash
+        run: |
+          rm -rf "${{ steps.docker-config.outputs.dir }}" || true
 
       - name: Apply skipped (gated)
         if: steps.gate.outputs.apply != 'true'
