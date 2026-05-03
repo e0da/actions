@@ -1,0 +1,211 @@
+name: Release Rust
+
+on:
+  workflow_call:
+    inputs:
+      binary-name:
+        required: true
+        type: string
+      targets:
+        required: false
+        type: string
+        default: "aarch64-apple-darwin,x86_64-unknown-linux-musl"
+      smoke-command:
+        required: false
+        type: string
+        default: ""
+      push-image:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      GHCR_TOKEN:
+        required: false
+
+jobs:
+  validate:
+    name: Validate Release Tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag matches Cargo.toml version
+        id: meta
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')"
+          expected_tag="v${version}"
+
+          if [[ "$tag" != "$expected_tag" ]]; then
+            echo "release tag mismatch: expected ${expected_tag}, got ${tag}" >&2
+            exit 1
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-((pre|alpha|beta|rc)\.[0-9]+))?$ ]]; then
+            echo "version is not on a supported release train: ${version}" >&2
+            exit 1
+          fi
+
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+
+          echo "validated ${tag} → ${version} (prerelease=${prerelease})"
+          {
+            echo "version=${version}"
+            echo "prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable \
+            --profile minimal \
+            --target ${{ matrix.target }}
+          rustup default stable
+
+      - name: Add musl target (Linux)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y musl-tools
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stable-${{ runner.os }}-${{ matrix.target }}
+
+      - name: Check if target is requested
+        id: check-target
+        run: |
+          if echo "${{ inputs.targets }}" | grep -q "${{ matrix.target }}"; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release binary
+        if: steps.check-target.outputs.skip == 'false'
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Smoke test (native targets only)
+        if: steps.check-target.outputs.skip == 'false' && inputs.smoke-command != '' && matrix.target == 'aarch64-apple-darwin' && runner.os == 'macOS'
+        run: ${{ inputs.smoke-command }}
+
+      - name: Package binary
+        id: package
+        if: steps.check-target.outputs.skip == 'false'
+        shell: bash
+        run: |
+          binary="${{ inputs.binary-name }}"
+          target="${{ matrix.target }}"
+          version="${{ needs.validate.outputs.version }}"
+          archive="${binary}-${version}-${target}.tar.gz"
+
+          cp "target/${target}/release/${binary}" "${binary}"
+          tar czf "${archive}" "${binary}"
+          shasum -a 256 "${archive}" > "${archive}.sha256"
+
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        if: steps.check-target.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ needs.validate.outputs.prerelease }}
+          generate_release_notes: true
+          files: |
+            *.tar.gz
+            *.sha256
+
+  push-image:
+    name: Push Container Image
+    needs: [validate, build]
+    if: inputs.push-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/e0da/${{ inputs.binary-name }}:${{ needs.validate.outputs.version }}
+            ghcr.io/e0da/${{ inputs.binary-name }}:latest

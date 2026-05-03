@@ -1,0 +1,70 @@
+name: CI Rust
+
+on:
+  workflow_call:
+    inputs:
+      toolchain:
+        required: false
+        type: string
+        default: stable
+      features:
+        required: false
+        type: string
+        default: ""
+      test-args:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-and-test:
+    name: Fmt / Clippy / Test / Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install ${{ inputs.toolchain }} \
+            --profile minimal \
+            --component clippy,rustfmt
+          rustup default ${{ inputs.toolchain }}
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ inputs.toolchain }}-${{ runner.os }}
+
+      - name: Install cargo-nextest from prebuilt binaries
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+          fallback: none
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --all-targets --locked \
+            ${{ inputs.features != '' && format('--features {0}', inputs.features) || '' }} \
+            -- -D warnings
+
+      - name: Test
+        run: |
+          cargo nextest run --workspace --locked \
+            ${{ inputs.features != '' && format('--features {0}', inputs.features) || '' }} \
+            ${{ inputs.test-args != '' && inputs.test-args || '' }}
+
+      - name: Build
+        run: cargo build --workspace --locked
