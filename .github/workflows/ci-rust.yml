@@ -1,5 +1,25 @@
 name: CI Rust
 
+# Reusable Rust CI workflow.
+#
+# Inputs:
+#   toolchain    — Rust toolchain channel (default "stable").
+#   features     — Cargo feature flags forwarded to clippy and test.
+#   test-args    — Extra args appended to `cargo nextest run`.
+#   system-deps  — Space-separated list of apt packages to install on the
+#                  Ubuntu runner BEFORE Rust setup (e.g. "libpq-dev",
+#                  "build-essential"). Empty default means no apt installs
+#                  run. NOTE: sops is NOT in Ubuntu apt — use install-sops
+#                  for sops.
+#   install-sops — When true, installs sops from official getsops/sops
+#                  GitHub releases at the version pinned in this workflow.
+#                  sops is the agency's first-class secrets envelope (per
+#                  rules/secrets.md sops-first default), so it's a typed
+#                  boolean input rather than a free-form package name.
+#                  Default: false. Used by mm (and future agency Rust
+#                  binaries that shell out to sops, e.g. mm-reply-shim per
+#                  ADR-0026 §8).
+
 on:
   workflow_call:
     inputs:
@@ -15,6 +35,14 @@ on:
         required: false
         type: string
         default: ""
+      system-deps:
+        required: false
+        type: string
+        default: ""
+      install-sops:
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build-and-test:
@@ -32,6 +60,27 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Install system dependencies
+        if: inputs.system-deps != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ inputs.system-deps }}
+
+      - name: Install sops
+        if: inputs.install-sops
+        # Pinned version. Update this line to bump the agency's CI sops version.
+        # Verify sha256 against the official release attestation before bumping.
+        env:
+          SOPS_VERSION: v3.12.2
+          SOPS_SHA256: 14e2e1ba3bef31e74b70cf0b674f6443c80f6c5f3df15d05ffc57c34851b4998
+        run: |
+          set -euo pipefail
+          url="https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64"
+          curl --fail --silent --show-error --location --output /tmp/sops "$url"
+          echo "${SOPS_SHA256}  /tmp/sops" | sha256sum --check --status
+          sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+          sops --version --disable-version-check
 
       - name: Install Rust toolchain
         run: |
