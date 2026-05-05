@@ -3,22 +3,30 @@ name: CI Rust
 # Reusable Rust CI workflow.
 #
 # Inputs:
-#   toolchain    — Rust toolchain channel (default "stable").
-#   features     — Cargo feature flags forwarded to clippy and test.
-#   test-args    — Extra args appended to `cargo nextest run`.
-#   system-deps  — Space-separated list of apt packages to install on the
-#                  Ubuntu runner BEFORE Rust setup (e.g. "libpq-dev",
-#                  "build-essential"). Empty default means no apt installs
-#                  run. NOTE: sops is NOT in Ubuntu apt — use install-sops
-#                  for sops.
-#   install-sops — When true, installs sops from official getsops/sops
-#                  GitHub releases at the version pinned in this workflow.
-#                  sops is the agency's first-class secrets envelope (per
-#                  rules/secrets.md sops-first default), so it's a typed
-#                  boolean input rather than a free-form package name.
-#                  Default: false. Used by mm (and future agency Rust
-#                  binaries that shell out to sops, e.g. mm-reply-shim per
-#                  ADR-0026 §8).
+#   toolchain           — Rust toolchain channel (default "stable").
+#   features            — Cargo feature flags forwarded to clippy and test.
+#   test-args           — Extra args appended to `cargo nextest run`.
+#   system-deps         — Space-separated list of apt packages to install on the
+#                         Ubuntu runner BEFORE Rust setup (e.g. "libpq-dev",
+#                         "build-essential"). Empty default means no apt installs
+#                         run. NOTE: sops is NOT in Ubuntu apt — use install-sops
+#                         for sops.
+#   install-sops        — When true, installs sops from official getsops/sops
+#                         GitHub releases at the version pinned in this workflow.
+#                         sops is the agency's first-class secrets envelope (per
+#                         rules/secrets.md sops-first default), so it's a typed
+#                         boolean input rather than a free-form package name.
+#                         Default: false. Used by mm (and future agency Rust
+#                         binaries that shell out to sops, e.g. mm-reply-shim per
+#                         ADR-0026 §8).
+#   install-nats-server — When true, installs nats-server from official
+#                         nats-io/nats-server GitHub releases at the version
+#                         pinned in this workflow. Required for integration tests
+#                         that spawn a real nats-server process (e.g. mm's
+#                         journey_a_standard_delivery_integration test harness in
+#                         tests/common/mod.rs). ubuntu-latest does not include
+#                         nats-server in its default package set.
+#                         Default: false.
 
 on:
   workflow_call:
@@ -40,6 +48,10 @@ on:
         type: string
         default: ""
       install-sops:
+        required: false
+        type: boolean
+        default: false
+      install-nats-server:
         required: false
         type: boolean
         default: false
@@ -81,6 +93,23 @@ jobs:
           echo "${SOPS_SHA256}  /tmp/sops" | sha256sum --check --status
           sudo install -m 0755 /tmp/sops /usr/local/bin/sops
           sops --version --disable-version-check
+
+      - name: Install nats-server
+        if: inputs.install-nats-server
+        # Pinned version. Update this line to bump the agency's CI nats-server version.
+        # Verify sha256 against the official SHA256SUMS file before bumping.
+        env:
+          NATS_VERSION: v2.14.0
+          NATS_SHA256: 3d8b74dfad39af184c765a6dd120441ed1c648d6672eddf6b304f222661251b8
+        run: |
+          set -euo pipefail
+          archive="nats-server-${NATS_VERSION}-linux-amd64.tar.gz"
+          url="https://github.com/nats-io/nats-server/releases/download/${NATS_VERSION}/${archive}"
+          curl --fail --silent --show-error --location --output "/tmp/${archive}" "$url"
+          echo "${NATS_SHA256}  /tmp/${archive}" | sha256sum --check --status
+          tar -xzf "/tmp/${archive}" -C /tmp "nats-server-${NATS_VERSION}-linux-amd64/nats-server"
+          sudo install -m 0755 "/tmp/nats-server-${NATS_VERSION}-linux-amd64/nats-server" /usr/local/bin/nats-server
+          nats-server --version
 
       - name: Install Rust toolchain
         run: |
