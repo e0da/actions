@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           context="merge-readiness/e0da"
-          pr_json="$(gh pr view "${PR_NUMBER}" --repo "${GH_REPO}" --json baseRefName,headRefOid,isDraft,labels,url)"
+          pr_json="$(gh pr view "${PR_NUMBER}" --repo "${GH_REPO}" --json baseRefName,headRefOid,labels,url)"
           base_ref="$(printf '%s' "${pr_json}" | jq -r '.baseRefName')"
           head_sha="${HEAD_SHA}"
           pr_url="$(printf '%s' "${pr_json}" | jq -r '.url')"
