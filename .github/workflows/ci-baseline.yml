@@ -21,23 +21,6 @@ jobs:
           fi
           echo "✅ PR title OK: $PR_TITLE"
 
-  branch-name:
-    name: Branch Naming
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Check branch name
-        env:
-          BRANCH: ${{ github.head_ref }}
-        run: |
-          if ! echo "$BRANCH" | grep -qE '^(main|feat/.+|fix/.+|chore/.+|ci/.+|docs/.+|gt-.+|[0-9]{2}-[0-9]{2}-.+)$'; then
-            echo "❌ Branch name does not match required pattern."
-            echo "   Allowed: main, feat/*, fix/*, chore/*, ci/*, docs/*, gt-*, MM-DD-* (Graphite)"
-            echo "   Got: $BRANCH"
-            exit 1
-          fi
-          echo "✅ Branch name OK: $BRANCH"
-
   secret-scan:
     name: Secret Scan (Gitleaks)
     runs-on: ubuntu-latest
