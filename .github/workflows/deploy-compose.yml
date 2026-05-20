@@ -7,6 +7,8 @@ name: Deploy Compose Service
 #   A — static-bind:   rsync a build artifact directory into a host bind path
 #                      (no container restart needed; bind-mount is live).
 #   B — ghcr-image:    docker compose pull && up -d --wait (image built upstream).
+#                      Set skip-pull when another workflow already delivered
+#                      the image and this deploy only applies compose/env state.
 #   C — local-build:   docker compose build && up -d --wait (Dockerfile in tree).
 #   D — upstream-only: docker compose pull && up -d --wait (upstream image).
 #
@@ -69,6 +71,11 @@ on:
         required: false
         type: string
         default: ""
+      skip-pull:
+        description: "Skip docker compose pull for archetypes B/D and only run docker compose up -d --wait."
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   deploy:
@@ -249,7 +256,11 @@ jobs:
         run: |
           set -euo pipefail
           cd "${{ inputs.stack-path }}"
-          docker compose pull
+          if [[ "${{ inputs.skip-pull }}" == "true" ]]; then
+            echo "skip-pull=true; skipping docker compose pull"
+          else
+            docker compose pull
+          fi
           docker compose up -d --wait
 
       - name: Apply (archetype C — local build + up)
@@ -275,7 +286,11 @@ jobs:
         run: |
           set -euo pipefail
           cd "${{ inputs.stack-path }}"
-          docker compose pull
+          if [[ "${{ inputs.skip-pull }}" == "true" ]]; then
+            echo "skip-pull=true; skipping docker compose pull"
+          else
+            docker compose pull
+          fi
           docker compose up -d --wait
 
       - name: Cleanup ephemeral DOCKER_CONFIG
@@ -317,6 +332,7 @@ jobs:
             echo "- archetype: ${{ inputs.archetype }}"
             echo "- stack-path: \`${{ inputs.stack-path }}\`"
             echo "- apply: ${{ steps.gate.outputs.apply }}"
+            echo "- skip-pull: ${{ inputs.skip-pull }}"
             if [[ -n "${{ inputs.require-approval-label }}" ]]; then
               echo "- gate: \`${{ inputs.require-approval-label }}\`"
             fi
