@@ -16,11 +16,6 @@ name: Deploy Compose Service
 # on the runner using the in-place age key, written to `<stack-path>/.env`,
 # and removed via trap on exit. Plaintext .env never leaves the runner host.
 #
-# Stateful gating: when `require-approval-label` is non-empty, the apply
-# step is skipped unless the merging PR carries that label. The build/pull
-# step always runs. This satisfies ADR-016 §"stateful exception" for
-# nats and redis.
-
 on:
   workflow_call:
     inputs:
@@ -61,11 +56,6 @@ on:
         required: false
         type: string
         default: "dotenv"
-      require-approval-label:
-        description: "If non-empty, the apply step only runs when the merging PR carries this label. Build/pull always runs."
-        required: false
-        type: string
-        default: ""
       healthcheck-command:
         description: "Optional shell command to verify service health post-deploy. Non-zero exit fails the job."
         required: false
@@ -84,7 +74,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-      pull-requests: read
 
     steps:
       - name: Validate archetype
@@ -104,31 +93,6 @@ jobs:
               echo "archetype A requires both artifact-name and bind-target" >&2
               exit 1
             fi
-          fi
-
-      - name: Resolve approval gate
-        id: gate
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          required="${{ inputs.require-approval-label }}"
-          if [[ -z "$required" ]]; then
-            echo "apply=true" >> "$GITHUB_OUTPUT"
-            echo "no approval label required; apply enabled"
-            exit 0
-          fi
-          # Find merging PR for this commit (if any). On push events the head
-          # commit's associated PR carries the labels.
-          sha="${GITHUB_SHA}"
-          repo="${GITHUB_REPOSITORY}"
-          labels="$(gh api "/repos/${repo}/commits/${sha}/pulls" --jq '.[].labels[].name' 2>/dev/null || true)"
-          if echo "$labels" | grep -qx "$required"; then
-            echo "apply=true" >> "$GITHUB_OUTPUT"
-            echo "label '$required' present on merging PR; apply enabled"
-          else
-            echo "apply=false" >> "$GITHUB_OUTPUT"
-            echo "label '$required' NOT present on merging PR; apply skipped"
           fi
 
       - name: Refresh stack working tree
@@ -202,7 +166,7 @@ jobs:
           echo "decrypted env to $out"
 
       - name: Apply (archetype A — static-bind rsync)
-        if: inputs.archetype == 'A' && steps.gate.outputs.apply == 'true'
+        if: inputs.archetype == 'A'
         shell: bash
         run: |
           set -euo pipefail
@@ -213,7 +177,7 @@ jobs:
           echo "rsynced $source → $target"
 
       - name: Prepare ephemeral DOCKER_CONFIG
-        if: inputs.archetype != 'A' && steps.gate.outputs.apply == 'true'
+        if: inputs.archetype != 'A'
         id: docker-config
         shell: bash
         env:
@@ -247,7 +211,7 @@ jobs:
           echo "wrote ephemeral DOCKER_CONFIG at $dc"
 
       - name: Apply (archetype B — ghcr image pull + up)
-        if: inputs.archetype == 'B' && steps.gate.outputs.apply == 'true'
+        if: inputs.archetype == 'B'
         shell: bash
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
@@ -264,7 +228,7 @@ jobs:
           docker compose up -d --wait
 
       - name: Apply (archetype C — local build + up)
-        if: inputs.archetype == 'C' && steps.gate.outputs.apply == 'true'
+        if: inputs.archetype == 'C'
         shell: bash
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
@@ -277,7 +241,7 @@ jobs:
           docker compose up -d --wait
 
       - name: Apply (archetype D — upstream image pull + up)
-        if: inputs.archetype == 'D' && steps.gate.outputs.apply == 'true'
+        if: inputs.archetype == 'D'
         shell: bash
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
@@ -299,14 +263,8 @@ jobs:
         run: |
           rm -rf "${{ steps.docker-config.outputs.dir }}" || true
 
-      - name: Apply skipped (gated)
-        if: steps.gate.outputs.apply != 'true'
-        shell: bash
-        run: |
-          echo "::notice::Apply skipped: required approval label '${{ inputs.require-approval-label }}' not present on merging PR. Build/pull still completed."
-
       - name: Healthcheck
-        if: inputs.healthcheck-command != '' && steps.gate.outputs.apply == 'true'
+        if: inputs.healthcheck-command != ''
         shell: bash
         env:
           PATH: /usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin
@@ -331,9 +289,6 @@ jobs:
             echo ""
             echo "- archetype: ${{ inputs.archetype }}"
             echo "- stack-path: \`${{ inputs.stack-path }}\`"
-            echo "- apply: ${{ steps.gate.outputs.apply }}"
+            echo "- apply: true"
             echo "- skip-pull: ${{ inputs.skip-pull }}"
-            if [[ -n "${{ inputs.require-approval-label }}" ]]; then
-              echo "- gate: \`${{ inputs.require-approval-label }}\`"
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
