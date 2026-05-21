@@ -1,0 +1,50 @@
+name: Reusable OpenTofu CI
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the OpenTofu job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      tofu-version:
+        description: "OpenTofu version passed to opentofu/setup-opentofu."
+        required: false
+        type: string
+        default: latest
+      fmt-command:
+        description: "Command that checks OpenTofu formatting."
+        required: false
+        type: string
+        default: "tofu fmt -check -recursive"
+      validate-command:
+        description: "Command that initializes and validates configurations."
+        required: false
+        type: string
+        default: "make validate"
+
+jobs:
+  opentofu:
+    name: OpenTofu
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ inputs.tofu-version }}
+          tofu_wrapper: false
+
+      - name: Check formatting
+        env:
+          FMT_COMMAND: ${{ inputs.fmt-command }}
+        run: bash -lc "$FMT_COMMAND"
+
+      - name: Validate
+        env:
+          VALIDATE_COMMAND: ${{ inputs.validate-command }}
+        run: bash -lc "$VALIDATE_COMMAND"
