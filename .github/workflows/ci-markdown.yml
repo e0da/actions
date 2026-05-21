@@ -31,14 +31,14 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
-          args: ${{ inputs.link-args }}
+          args: ${{ inputs['link-args'] }}
           failIfEmpty: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   yaml-frontmatter:
     name: YAML Frontmatter Validation
-    if: ${{ inputs.validate-frontmatter }}
+    if: ${{ inputs['validate-frontmatter'] }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
