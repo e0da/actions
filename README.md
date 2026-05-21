@@ -35,6 +35,16 @@ newline-delimited non-secret CI environment entries through `env`.
 - **Link check**: [lychee](https://github.com/lycheeverse/lychee-action) scans all `.md` files for broken external links
 - **YAML frontmatter**: validates that any `---` frontmatter blocks are valid YAML
 
+### `ci-opentofu.yml` — OpenTofu repos
+
+Runs `opentofu/setup-opentofu`, then:
+
+- formatting check, default `tofu fmt -check -recursive`
+- validation, default `make validate`
+
+Callers can override `fmt-command`, `validate-command`, `tofu-version`, and
+`runner`.
+
 ## How to adopt
 
 In any repo, create `.github/workflows/ci.yml`:
@@ -58,6 +68,10 @@ jobs:
   # Add for markdown-heavy repos:
   markdown:
     uses: e0da/actions/.github/workflows/ci-markdown.yml@main
+
+  # Add for OpenTofu repos:
+  opentofu:
+    uses: e0da/actions/.github/workflows/ci-opentofu.yml@main
 ```
 
 Mix and match — only include the workflows relevant to each repo.
