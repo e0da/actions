@@ -41,6 +41,13 @@ jobs:
           ruby-version: ${{ inputs['ruby-version'] }}
           bundler-cache: true
 
+      - name: Install ripgrep
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+          fi
+
       - name: Build
         env:
           BUILD_COMMAND: ${{ inputs['build-command'] }}
