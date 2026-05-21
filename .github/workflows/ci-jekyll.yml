@@ -38,16 +38,16 @@ jobs:
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: ${{ inputs.ruby-version }}
+          ruby-version: ${{ inputs['ruby-version'] }}
           bundler-cache: true
 
       - name: Build
         env:
-          BUILD_COMMAND: ${{ inputs.build-command }}
+          BUILD_COMMAND: ${{ inputs['build-command'] }}
         run: bash -lc "$BUILD_COMMAND"
 
       - name: Test
-        if: ${{ inputs.test-command != '' }}
+        if: ${{ inputs['test-command'] != '' }}
         env:
-          TEST_COMMAND: ${{ inputs.test-command }}
+          TEST_COMMAND: ${{ inputs['test-command'] }}
         run: bash -lc "$TEST_COMMAND"
