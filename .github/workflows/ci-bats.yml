@@ -1,0 +1,39 @@
+name: CI Bats
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the Bats job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      system-deps:
+        description: "Extra apt packages to install before running Bats."
+        required: false
+        type: string
+        default: ""
+      test-command:
+        description: "Command that runs the Bats suite."
+        required: false
+        type: string
+        default: "bats tests/"
+
+jobs:
+  bats:
+    name: Bats
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shell test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats ripgrep shellcheck ${{ inputs['system-deps'] }}
+
+      - name: Test
+        env:
+          TEST_COMMAND: ${{ inputs['test-command'] }}
+        run: bash -lc "$TEST_COMMAND"

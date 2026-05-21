@@ -37,6 +37,13 @@ newline-delimited non-secret CI environment entries through `env`.
 
 Callers can override the lychee argument string with `link-args`.
 
+### `ci-bats.yml` — Shell/Bats repos
+
+Installs `bats`, `rg`, and `shellcheck`, then runs the configured Bats command.
+
+Callers can override `runner`, install extra apt packages with `system-deps`,
+and override `test-command`.
+
 ### `ci-jekyll.yml` — Jekyll sites
 
 Runs `ruby/setup-ruby` with Bundler caching, then builds the site with
@@ -79,6 +86,10 @@ jobs:
   # Add for markdown-heavy repos:
   markdown:
     uses: e0da/actions/.github/workflows/ci-markdown.yml@main
+
+  # Add for shell/Bats repos:
+  bats:
+    uses: e0da/actions/.github/workflows/ci-bats.yml@main
 
   # Add for Jekyll sites:
   jekyll:
