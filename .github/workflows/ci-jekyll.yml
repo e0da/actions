@@ -47,7 +47,12 @@ jobs:
         run: bash -lc "$BUILD_COMMAND"
 
       - name: Test
-        if: ${{ inputs['test-command'] != '' }}
         env:
           TEST_COMMAND: ${{ inputs['test-command'] }}
-        run: bash -lc "$TEST_COMMAND"
+        run: |
+          if [ -z "$TEST_COMMAND" ]; then
+            echo "No test command configured."
+            exit 0
+          fi
+
+          bash -lc "$TEST_COMMAND"
