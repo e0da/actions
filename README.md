@@ -18,12 +18,17 @@ stack process for repos that use Graphite.
 
 ### `ci-typescript-bun.yml` — TypeScript/Bun repos
 
-Runs `bun install`, then skips any step whose script doesn't exist in `package.json`:
+Runs `bun install`, exports optional CI env entries, then skips any step whose
+script doesn't exist in `package.json`:
 
 - `bun run lint`
 - `bun run build`
 - `bun run check` (tsc)
 - `bun test` (only if test files are found)
+
+Callers can override `lint-command`, `build-command`, `check-command`, and
+`test-command`, request a Playwright browser with `playwright-browser`, and pass
+newline-delimited non-secret CI environment entries through `env`.
 
 ### `ci-markdown.yml` — Markdown-heavy repos
 
