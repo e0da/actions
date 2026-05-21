@@ -35,6 +35,17 @@ newline-delimited non-secret CI environment entries through `env`.
 - **Link check**: [lychee](https://github.com/lycheeverse/lychee-action) scans all `.md` files for broken external links
 - **YAML frontmatter**: validates that any `---` frontmatter blocks are valid YAML
 
+Callers can override the lychee argument string with `link-args` and can disable
+frontmatter validation with `validate-frontmatter: false`.
+
+### `ci-jekyll.yml` — Jekyll sites
+
+Runs `ruby/setup-ruby` with Bundler caching, then builds the site with
+`bundle exec jekyll build --strict_front_matter`.
+
+Callers can override `runner`, `ruby-version`, `build-command`, and provide an
+optional `test-command` for site-specific structural checks.
+
 ### `ci-opentofu.yml` — OpenTofu repos
 
 Runs `opentofu/setup-opentofu`, then:
@@ -68,6 +79,10 @@ jobs:
   # Add for markdown-heavy repos:
   markdown:
     uses: e0da/actions/.github/workflows/ci-markdown.yml@main
+
+  # Add for Jekyll sites:
+  jekyll:
+    uses: e0da/actions/.github/workflows/ci-jekyll.yml@main
 
   # Add for OpenTofu repos:
   opentofu:

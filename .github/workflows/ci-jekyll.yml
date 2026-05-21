@@ -1,0 +1,53 @@
+name: Reusable Jekyll CI
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the Jekyll job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      ruby-version:
+        description: "Ruby version passed to ruby/setup-ruby."
+        required: false
+        type: string
+        default: "3.2"
+      build-command:
+        description: "Command that builds the Jekyll site."
+        required: false
+        type: string
+        default: "bundle exec jekyll build --strict_front_matter"
+      test-command:
+        description: "Optional command that runs repository-specific site checks after build."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  jekyll:
+    name: Jekyll
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    env:
+      JEKYLL_ENV: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ inputs.ruby-version }}
+          bundler-cache: true
+
+      - name: Build
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -lc "$BUILD_COMMAND"
+
+      - name: Test
+        if: ${{ inputs.test-command != '' }}
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: bash -lc "$TEST_COMMAND"

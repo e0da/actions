@@ -2,6 +2,24 @@ name: CI Markdown
 
 on:
   workflow_call:
+    inputs:
+      link-args:
+        description: "Arguments passed to lychee."
+        required: false
+        type: string
+        default: >-
+          --verbose
+          --no-progress
+          --exclude-loopback
+          --exclude-private
+          --exclude "^mailto:"
+          --exclude "^https://github.com/e0da/"
+          '**/*.md'
+      validate-frontmatter:
+        description: "Whether to validate YAML frontmatter blocks in Markdown files."
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   link-check:
@@ -13,20 +31,14 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
-          args: >
-            --verbose
-            --no-progress
-            --exclude-loopback
-            --exclude-private
-            --exclude "^mailto:"
-            --exclude "^https://github.com/e0da/"
-            '**/*.md'
+          args: ${{ inputs.link-args }}
           failIfEmpty: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   yaml-frontmatter:
     name: YAML Frontmatter Validation
+    if: ${{ inputs.validate-frontmatter }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
