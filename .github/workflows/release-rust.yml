@@ -42,7 +42,15 @@ jobs:
         id: meta
         run: |
           tag="${GITHUB_REF_NAME}"
-          version="$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')"
+          version="$(python3 - <<'PY'
+          import tomllib
+
+          with open("Cargo.toml", "rb") as handle:
+              manifest = tomllib.load(handle)
+
+          print(manifest["package"]["version"])
+          PY
+          )"
           expected_tag="v${version}"
 
           if [[ "$tag" != "$expected_tag" ]]; then
@@ -114,7 +122,8 @@ jobs:
       - name: Check if target is requested
         id: check-target
         run: |
-          if echo "${{ inputs.targets }}" | grep -q "${{ matrix.target }}"; then
+          requested_targets=",${{ inputs.targets }},"
+          if [[ "$requested_targets" == *",${{ matrix.target }},"* ]]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
           else
             echo "skip=true" >> "$GITHUB_OUTPUT"
