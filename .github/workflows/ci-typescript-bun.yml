@@ -17,19 +17,24 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install ripgrep
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+          fi
+
       - name: Lint
         run: |
-          if bun run --silent lint 2>/dev/null; then
-            echo "✅ Lint passed"
-          elif cat package.json | grep -q '"lint"'; then
-            echo "❌ Lint script exists but failed" && exit 1
+          if bun -e 'const p = await Bun.file("package.json").json(); process.exit(p.scripts?.lint ? 0 : 1);'; then
+            bun run lint
           else
             echo "⏭️ No lint script — skipping"
           fi
 
       - name: Build
         run: |
-          if cat package.json | grep -q '"build"'; then
+          if bun -e 'const p = await Bun.file("package.json").json(); process.exit(p.scripts?.build ? 0 : 1);'; then
             bun run build
           else
             echo "⏭️ No build script — skipping"
@@ -37,7 +42,7 @@ jobs:
 
       - name: Type check
         run: |
-          if cat package.json | grep -q '"check"'; then
+          if bun -e 'const p = await Bun.file("package.json").json(); process.exit(p.scripts?.check ? 0 : 1);'; then
             bun run check
           else
             echo "⏭️ No check script — skipping"
@@ -45,7 +50,7 @@ jobs:
 
       - name: Test
         run: |
-          if find . -name "*.test.ts" -o -name "*.test.tsx" -o -name "*.spec.ts" -o -name "*.spec.tsx" 2>/dev/null | grep -q .; then
+          if rg --files -g '*.test.ts' -g '*.test.tsx' -g '*.spec.ts' -g '*.spec.tsx' | rg -q '.'; then
             bun test
           else
             echo "⏭️ No test files found — skipping"

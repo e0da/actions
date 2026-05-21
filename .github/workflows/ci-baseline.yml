@@ -13,7 +13,7 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|chore|docs|refactor|test|ci)(\(.+\))?: .+'; then
+          if [[ ! "$PR_TITLE" =~ ^(feat|fix|chore|docs|refactor|test|ci)(\(.+\))?:[[:space:]].+ ]]; then
             echo "❌ PR title must follow Conventional Commits format."
             echo "   Expected: feat|fix|chore|docs|refactor|test|ci: <description>"
             echo "   Got: $PR_TITLE"
