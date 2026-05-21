@@ -43,7 +43,8 @@ Runs `ruby/setup-ruby` with Bundler caching, then builds the site with
 `bundle exec jekyll build --strict_front_matter`.
 
 Callers can override `runner`, `ruby-version`, `build-command`, and provide an
-optional `test-command` for site-specific structural checks.
+optional `test-command` for site-specific structural checks. The workflow
+installs `rg` so those checks can use the shared fast-search baseline.
 
 ### `ci-opentofu.yml` — OpenTofu repos
 
