@@ -15,12 +15,6 @@ on:
           --exclude "^mailto:"
           --exclude "^https://github.com/e0da/"
           '**/*.md'
-      validate-frontmatter:
-        description: "Whether to validate YAML frontmatter blocks in Markdown files."
-        required: false
-        type: boolean
-        default: true
-
 jobs:
   link-check:
     name: Broken Link Check
@@ -38,7 +32,6 @@ jobs:
 
   yaml-frontmatter:
     name: YAML Frontmatter Validation
-    if: ${{ inputs['validate-frontmatter'] }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

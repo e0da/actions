@@ -35,8 +35,7 @@ newline-delimited non-secret CI environment entries through `env`.
 - **Link check**: [lychee](https://github.com/lycheeverse/lychee-action) scans all `.md` files for broken external links
 - **YAML frontmatter**: validates that any `---` frontmatter blocks are valid YAML
 
-Callers can override the lychee argument string with `link-args` and can disable
-frontmatter validation with `validate-frontmatter: false`.
+Callers can override the lychee argument string with `link-args`.
 
 ### `ci-jekyll.yml` — Jekyll sites
 
