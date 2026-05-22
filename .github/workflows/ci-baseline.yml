@@ -7,11 +7,35 @@ jobs:
   pr-title:
     name: PR Title (Conventional Commits)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     if: github.event_name == 'pull_request'
     steps:
+      - name: Resolve current PR title
+        id: pr-title
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          title="$EVENT_PR_TITLE"
+          if [[ -n "$PR_NUMBER" ]]; then
+            current_title="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.title' 2>/dev/null || true)"
+            if [[ -n "$current_title" ]]; then
+              title="$current_title"
+            fi
+          fi
+          {
+            echo 'title<<EOF'
+            echo "$title"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Check PR title format
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: ${{ steps.pr-title.outputs.title }}
         run: |
           if [[ ! "$PR_TITLE" =~ ^(feat|fix|chore|docs|refactor|test|ci)(\(.+\))?:[[:space:]].+ ]]; then
             echo "❌ PR title must follow Conventional Commits format."
