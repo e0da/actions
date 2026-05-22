@@ -53,6 +53,14 @@ Callers can override `runner`, `ruby-version`, `build-command`, and provide an
 optional `test-command` for site-specific structural checks. The workflow
 installs `rg` so those checks can use the shared fast-search baseline.
 
+### `ci-elixir.yml` — Elixir/Mix repos
+
+Runs `erlef/setup-beam`, caches `deps` and `_build`, installs test
+dependencies, then runs `mix ci` by default.
+
+Callers can override `runner`, `otp-version`, `elixir-version`,
+`deps-command`, and `ci-command`.
+
 ### `ci-opentofu.yml` — OpenTofu repos
 
 Runs `opentofu/setup-opentofu`, then:
@@ -102,6 +110,10 @@ jobs:
   # Add for Jekyll sites:
   jekyll:
     uses: e0da/actions/.github/workflows/ci-jekyll.yml@main
+
+  # Add for Elixir/Mix repos:
+  elixir:
+    uses: e0da/actions/.github/workflows/ci-elixir.yml@main
 
   # Add for OpenTofu repos:
   opentofu:
