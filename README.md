@@ -63,6 +63,14 @@ Runs `opentofu/setup-opentofu`, then:
 Callers can override `fmt-command`, `validate-command`, `tofu-version`, and
 `runner`.
 
+### `ci-rust.yml` — Rust repos
+
+Runs `cargo fmt`, `cargo clippy`, `cargo nextest`, and `cargo build`.
+
+Callers can override the Rust toolchain, feature flags, test args, and apt
+system dependencies. For integration tests that need NATS, callers can set
+`start-nats-jetstream: true` and `nats-test-url: nats://localhost:4222`.
+
 ## How to adopt
 
 In any repo, create `.github/workflows/ci.yml`:
@@ -98,6 +106,10 @@ jobs:
   # Add for OpenTofu repos:
   opentofu:
     uses: e0da/actions/.github/workflows/ci-opentofu.yml@main
+
+  # Add for Rust repos:
+  rust:
+    uses: e0da/actions/.github/workflows/ci-rust.yml@main
 ```
 
 Mix and match — only include the workflows relevant to each repo.
