@@ -27,6 +27,13 @@ name: CI Rust
 #                         tests/common/mod.rs). ubuntu-latest does not include
 #                         nats-server in its default package set.
 #                         Default: false.
+#   start-nats-jetstream — When true, installs nats-server if needed, starts a
+#                         local JetStream-enabled nats-server on port 4222, and
+#                         waits for it before running cargo checks. Use with
+#                         nats-test-url for test suites that connect to NATS.
+#                         Default: false.
+#   nats-test-url       — Value exposed as NATS_TEST_URL for cargo commands.
+#                         Default: "".
 
 on:
   workflow_call:
@@ -55,6 +62,14 @@ on:
         required: false
         type: boolean
         default: false
+      start-nats-jetstream:
+        required: false
+        type: boolean
+        default: false
+      nats-test-url:
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build-and-test:
@@ -66,6 +81,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
+      NATS_TEST_URL: ${{ inputs.nats-test-url }}
 
     steps:
       - name: Check out repository
@@ -95,7 +111,7 @@ jobs:
           sops --version --disable-version-check
 
       - name: Install nats-server
-        if: inputs.install-nats-server
+        if: inputs.install-nats-server || inputs.start-nats-jetstream
         # Pinned version. Update this line to bump the agency's CI nats-server version.
         # Verify sha256 against the official SHA256SUMS file before bumping.
         env:
@@ -110,6 +126,21 @@ jobs:
           tar -xzf "/tmp/${archive}" -C /tmp "nats-server-${NATS_VERSION}-linux-amd64/nats-server"
           sudo install -m 0755 "/tmp/nats-server-${NATS_VERSION}-linux-amd64/nats-server" /usr/local/bin/nats-server
           nats-server --version
+
+      - name: Start nats-server with JetStream
+        if: inputs.start-nats-jetstream
+        run: |
+          set -euo pipefail
+          nats-server -js -p 4222 > /tmp/nats-server.log 2>&1 &
+          echo "$!" > /tmp/nats-server.pid
+          for _ in {1..30}; do
+            if timeout 1 bash -c ': > /dev/tcp/127.0.0.1/4222'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -100 /tmp/nats-server.log
+          exit 1
 
       - name: Install Rust toolchain
         run: |
