@@ -27,10 +27,10 @@ name: CI Rust
 #                         tests/common/mod.rs). ubuntu-latest does not include
 #                         nats-server in its default package set.
 #                         Default: false.
-#   start-nats-jetstream — When true, installs nats-server if needed, starts a
-#                         local JetStream-enabled nats-server on port 4222, and
-#                         waits for it before running cargo checks. Use with
-#                         nats-test-url for test suites that connect to NATS.
+#   start-nats-jetstream — When true, starts a pinned local Docker NATS service
+#                         with JetStream enabled on port 4222 and waits for it
+#                         before running cargo checks. Use with nats-test-url
+#                         for test suites that connect to NATS.
 #                         Default: false.
 #   nats-test-url       — Value exposed as NATS_TEST_URL for cargo commands.
 #                         Default: "".
@@ -111,7 +111,7 @@ jobs:
           sops --version --disable-version-check
 
       - name: Install nats-server
-        if: inputs.install-nats-server || inputs.start-nats-jetstream
+        if: inputs.install-nats-server
         # Pinned version. Update this line to bump the agency's CI nats-server version.
         # Verify sha256 against the official SHA256SUMS file before bumping.
         env:
@@ -131,15 +131,15 @@ jobs:
         if: inputs.start-nats-jetstream
         run: |
           set -euo pipefail
-          nohup nats-server -js -p 4222 > /tmp/nats-server.log 2>&1 &
-          echo "$!" > /tmp/nats-server.pid
+          docker rm -f ci-nats >/dev/null 2>&1 || true
+          docker run --detach --name ci-nats --publish 4222:4222 nats:2.14.0 -js
           for _ in {1..30}; do
             if timeout 1 bash -c ': > /dev/tcp/127.0.0.1/4222'; then
               exit 0
             fi
             sleep 1
           done
-          tail -100 /tmp/nats-server.log
+          docker logs ci-nats
           exit 1
 
       - name: Install Rust toolchain
