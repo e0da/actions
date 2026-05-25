@@ -1,0 +1,26 @@
+name: Puck Linux ARM64 Smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Puck Linux ARM64
+    runs-on: [self-hosted, puck-linux-arm64]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host identity
+        run: |
+          uname -a
+          uname -m
+          id
+
+      - name: Docker daemon
+        run: docker version
+
+      - name: Linux ARM64 container
+        run: docker run --rm --platform linux/arm64 alpine:3.20 uname -m
