@@ -4,6 +4,12 @@ Shared CI/CD workflows and custom actions for e0da repos.
 
 ## Workflows
 
+### `puck-linux-arm64-smoke.yml` — Manual runner proof
+
+Manual `workflow_dispatch` smoke test for the `puck-linux-arm64` self-hosted
+runner lane. It verifies host identity, Docker socket access, and Linux ARM64
+container execution.
+
 ### `ci-baseline.yml` — All repos
 
 Checks that apply universally:

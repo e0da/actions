@@ -1,3 +1,4 @@
 self-hosted-runner:
   labels:
     - puck
+    - puck-linux-arm64
