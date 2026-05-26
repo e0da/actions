@@ -1,0 +1,59 @@
+name: Reusable Elixir CI on puck Linux ARM64
+
+on:
+  workflow_call:
+    inputs:
+      otp-version:
+        description: "Erlang/OTP version passed to erlef/setup-beam."
+        required: false
+        type: string
+        default: "28"
+      elixir-version:
+        description: "Elixir version passed to erlef/setup-beam."
+        required: false
+        type: string
+        default: "1.19.5"
+      deps-command:
+        description: "Command that fetches project dependencies."
+        required: false
+        type: string
+        default: "mix deps.get --only test"
+      ci-command:
+        description: "Command that runs the project CI contract."
+        required: false
+        type: string
+        default: "mix ci"
+
+jobs:
+  mix:
+    name: Mix
+    runs-on: [self-hosted, puck-linux-arm64]
+    permissions:
+      contents: read
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up BEAM
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ inputs.otp-version }}
+          elixir-version: ${{ inputs.elixir-version }}
+
+      - name: Cache Mix deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-otp-${{ inputs.otp-version }}-elixir-${{ inputs.elixir-version }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-otp-${{ inputs.otp-version }}-elixir-${{ inputs.elixir-version }}-mix-
+            ${{ runner.os }}-mix-
+
+      - name: Install deps
+        run: ${{ inputs.deps-command }}
+
+      - name: Run CI
+        run: ${{ inputs.ci-command }}

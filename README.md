@@ -67,6 +67,14 @@ dependencies, then runs `mix ci` by default.
 Callers can override `runner`, `otp-version`, `elixir-version`,
 `deps-command`, and `ci-command`.
 
+### `ci-elixir-puck-linux-arm64.yml` — Elixir/Mix repos on puck Linux
+
+Runs the same Elixir/Mix CI contract as `ci-elixir.yml`, but pins the job to
+the self-hosted `puck-linux-arm64` runner lane.
+
+Callers can override `otp-version`, `elixir-version`, `deps-command`, and
+`ci-command`.
+
 ### `ci-opentofu.yml` — OpenTofu repos
 
 Runs `opentofu/setup-opentofu`, then:
@@ -120,6 +128,10 @@ jobs:
   # Add for Elixir/Mix repos:
   elixir:
     uses: e0da/actions/.github/workflows/ci-elixir.yml@main
+
+  # Add for Elixir/Mix repos that should run on puck Linux:
+  elixir-puck-linux:
+    uses: e0da/actions/.github/workflows/ci-elixir-puck-linux-arm64.yml@main
 
   # Add for OpenTofu repos:
   opentofu:
