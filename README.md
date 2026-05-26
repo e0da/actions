@@ -22,6 +22,9 @@ stack process for repos that use Graphite.
 
 > `GITLEAKS_LICENSE` secret is optional — without it Gitleaks runs in OSS mode with a rate limit.
 
+Callers can override `runner` when both baseline jobs should run on a different
+runner label, for example `puck-linux-arm64`.
+
 ### `ci-typescript-bun.yml` — TypeScript/Bun repos
 
 Runs `bun install`, exports optional CI env entries, then skips any step whose

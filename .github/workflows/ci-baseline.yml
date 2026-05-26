@@ -2,11 +2,17 @@ name: CI Baseline
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for baseline jobs."
+        required: false
+        type: string
+        default: ubuntu-latest
 
 jobs:
   pr-title:
     name: PR Title (Conventional Commits)
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
       pull-requests: read
@@ -47,7 +53,7 @@ jobs:
 
   secret-scan:
     name: Secret Scan (Gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
       pull-requests: read
