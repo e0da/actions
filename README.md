@@ -44,7 +44,7 @@ newline-delimited non-secret CI environment entries through `env`.
 - **Link check**: [lychee](https://github.com/lycheeverse/lychee-action) scans all `.md` files for broken external links
 - **YAML frontmatter**: validates that any `---` frontmatter blocks are valid YAML
 
-Callers can override the lychee argument string with `link-args`.
+Callers can override `runner` and the lychee argument string with `link-args`.
 
 ### `ci-bats.yml` — Shell/Bats repos
 

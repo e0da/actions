@@ -3,6 +3,11 @@ name: CI Markdown
 on:
   workflow_call:
     inputs:
+      runner:
+        description: "GitHub runner label for markdown jobs."
+        required: false
+        type: string
+        default: ubuntu-latest
       link-args:
         description: "Arguments passed to lychee."
         required: false
@@ -18,7 +23,7 @@ on:
 jobs:
   link-check:
     name: Broken Link Check
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,54 +37,39 @@ jobs:
 
   yaml-frontmatter:
     name: YAML Frontmatter Validation
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ripgrep
-        run: |
-          if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y ripgrep
-          fi
-
       - name: Validate YAML frontmatter in .md files
         run: |
-          python3 <<'PY'
-          import subprocess
-          import sys
+          ruby <<'RB'
+          require "date"
+          require "yaml"
 
-          import yaml
+          files = `git ls-files "*.md"`.split("\n")
+          failed = false
 
-          files = subprocess.run(
-              ["rg", "--files", "-g", "*.md", "-g", "!**/.git/**"],
-              check=False,
-              stdout=subprocess.PIPE,
-              stderr=subprocess.PIPE,
-              text=True,
-          ).stdout.splitlines()
+          files.each do |path|
+            content = File.read(path, encoding: "UTF-8")
+            next unless content.start_with?("---\n")
 
-          failed = False
-          for path in files:
-              with open(path, "r", encoding="utf-8") as handle:
-                  content = handle.read()
+            match = content.match(/\A---\R(.*?)\R---\R/m)
+            unless match && !match[1].strip.empty?
+              warn "ERROR #{path}: Unclosed or empty frontmatter block"
+              failed = true
+              next
+            end
 
-              if not content.startswith("---\n"):
-                  continue
+            begin
+              YAML.safe_load(match[1], permitted_classes: [Date, Time], aliases: true)
+            rescue Psych::Exception => error
+              warn "ERROR #{path}: Invalid YAML frontmatter: #{error.message}"
+              failed = true
+            else
+              puts "OK #{path}"
+            end
+          end
 
-              parts = content.split("---", 2)
-              if len(parts) < 3 or not parts[1].strip():
-                  print(f"❌ {path}: Unclosed or empty frontmatter block")
-                  failed = True
-                  continue
-
-              try:
-                  yaml.safe_load(parts[1])
-              except yaml.YAMLError as error:
-                  print(f"❌ {path}: Invalid YAML frontmatter: {error}")
-                  failed = True
-              else:
-                  print(f"✅ {path}")
-
-          sys.exit(1 if failed else 0)
-          PY
+          exit(failed ? 1 : 0)
+          RB
