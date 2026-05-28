@@ -61,7 +61,8 @@ and override `test-command`.
 Runs `ruby/setup-ruby` with Bundler caching on non-macOS runners, then builds
 the site with `bundle exec jekyll build --strict_front_matter`. On macOS
 self-hosted runners, the workflow uses Homebrew Ruby and an explicit
-`bundle install` path instead of `ruby/setup-ruby`.
+`bundle install` path instead of `ruby/setup-ruby`. Build and test commands run
+in a non-login shell so the runner PATH remains intact.
 
 Callers can override `runner`, `ruby-version`, `build-command`, and provide an
 optional `test-command` for site-specific structural checks. The workflow

@@ -100,7 +100,7 @@ jobs:
       - name: Build
         env:
           BUILD_COMMAND: ${{ inputs['build-command'] }}
-        run: bash -lc "$BUILD_COMMAND"
+        run: bash -c "$BUILD_COMMAND"
 
       - name: Test
         env:
@@ -111,4 +111,4 @@ jobs:
             exit 0
           fi
 
-          bash -lc "$TEST_COMMAND"
+          bash -c "$TEST_COMMAND"
