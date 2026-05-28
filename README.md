@@ -90,6 +90,30 @@ and apt system dependencies. For integration tests that need NATS, callers can
 set `start-nats-jetstream: true` and
 `nats-test-url: nats://localhost:4222`.
 
+### `release-rust.yml` — Rust release artifacts
+
+Reusable release workflow for tagged Rust binary releases. It validates the
+release tag against `Cargo.toml`, builds requested target archives, publishes a
+GitHub Release, and can optionally push a GHCR image.
+
+Default targets stay compatible with existing callers:
+
+- `aarch64-apple-darwin`
+- `x86_64-unknown-linux-musl`
+
+Callers can include `aarch64-unknown-linux-musl` in `targets` to build a native
+Linux ARM64 musl artifact on the `linux-arm64-runner`, which defaults to
+`puck-linux-arm64`. The workflow supports Debian/Ubuntu (`apt-get`) and Alpine
+(`apk`) musl setup on Linux runners.
+
+Runner override inputs:
+
+- `validate-runner`
+- `linux-x64-runner`
+- `linux-arm64-runner`
+- `publish-runner`
+- `image-runner`
+
 ## How to adopt
 
 In any repo, create `.github/workflows/ci.yml`:

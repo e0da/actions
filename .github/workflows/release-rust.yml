@@ -10,6 +10,26 @@ on:
         required: false
         type: string
         default: "aarch64-apple-darwin,x86_64-unknown-linux-musl"
+      validate-runner:
+        required: false
+        type: string
+        default: ubuntu-latest
+      linux-x64-runner:
+        required: false
+        type: string
+        default: ubuntu-latest
+      linux-arm64-runner:
+        required: false
+        type: string
+        default: puck-linux-arm64
+      publish-runner:
+        required: false
+        type: string
+        default: ubuntu-latest
+      image-runner:
+        required: false
+        type: string
+        default: ubuntu-latest
       smoke-command:
         required: false
         type: string
@@ -25,7 +45,7 @@ on:
 jobs:
   validate:
     name: Validate Release Tag
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.validate-runner }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
@@ -86,8 +106,10 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: [self-hosted, macos, ARM64]
+          - target: aarch64-unknown-linux-musl
+            os: ${{ contains(format(',{0},', inputs.targets), ',aarch64-unknown-linux-musl,') && inputs.linux-arm64-runner || inputs.linux-x64-runner }}
           - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
+            os: ${{ inputs.linux-x64-runner }}
 
     runs-on: ${{ matrix.os }}
 
@@ -101,24 +123,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install stable \
-            --profile minimal \
-            --target ${{ matrix.target }}
-          rustup default stable
-
-      - name: Add musl target (Linux)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y musl-tools
-
-      - name: Restore Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: stable-${{ runner.os }}-${{ matrix.target }}
-
       - name: Check if target is requested
         id: check-target
         run: |
@@ -128,6 +132,40 @@ jobs:
           else
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Install Rust toolchain
+        if: steps.check-target.outputs.skip == 'false'
+        run: |
+          rustup toolchain install stable \
+            --profile minimal \
+            --target ${{ matrix.target }}
+          rustup default stable
+
+      - name: Add musl toolchain (Linux)
+        if: steps.check-target.outputs.skip == 'false' && (matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl')
+        run: |
+          set -euo pipefail
+          if command -v sudo >/dev/null 2>&1; then
+            sudo_cmd=sudo
+          else
+            sudo_cmd=
+          fi
+
+          if command -v apt-get >/dev/null 2>&1; then
+            $sudo_cmd apt-get update -q
+            $sudo_cmd apt-get install -y musl-tools
+          elif command -v apk >/dev/null 2>&1; then
+            $sudo_cmd apk add --no-cache build-base musl-dev
+          else
+            echo "unsupported Linux package manager for musl target setup" >&2
+            exit 1
+          fi
+
+      - name: Restore Rust cache
+        if: steps.check-target.outputs.skip == 'false'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stable-${{ runner.os }}-${{ matrix.target }}
 
       - name: Build release binary
         if: steps.check-target.outputs.skip == 'false'
@@ -166,7 +204,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: [validate, build]
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.publish-runner }}
     permissions:
       contents: write
 
@@ -190,7 +228,7 @@ jobs:
     name: Push Container Image
     needs: [validate, build]
     if: inputs.push-image
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.image-runner }}
     permissions:
       contents: read
       packages: write
