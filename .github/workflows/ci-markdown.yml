@@ -28,12 +28,40 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check links
+        if: runner.os == 'Linux'
         uses: lycheeverse/lychee-action@v2
         with:
           args: ${{ inputs['link-args'] }}
           failIfEmpty: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install lychee
+        if: runner.os == 'macOS'
+        run: |
+          if command -v lychee >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "Homebrew is required to install lychee on macOS self-hosted runners."
+            exit 1
+          fi
+
+          brew install lychee
+
+      - name: Check links
+        if: runner.os == 'macOS'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LYCHEE_ARGS: ${{ inputs['link-args'] }}
+        run: bash -lc "lychee ${LYCHEE_ARGS}"
+
+      - name: Check runner support
+        if: runner.os != 'Linux' && runner.os != 'macOS'
+        run: |
+          echo "ci-markdown supports Linux and macOS runners."
+          exit 1
 
   yaml-frontmatter:
     name: YAML Frontmatter Validation

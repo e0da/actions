@@ -42,7 +42,9 @@ entries through `env`.
 
 ### `ci-markdown.yml` — Markdown-heavy repos
 
-- **Link check**: [lychee](https://github.com/lycheeverse/lychee-action) scans all `.md` files for broken external links
+- **Link check**: lychee scans all `.md` files for broken external links. Linux
+  runners use `lycheeverse/lychee-action`; macOS self-hosted runners install or
+  use the Homebrew `lychee` package.
 - **YAML frontmatter**: validates that any `---` frontmatter blocks are valid YAML
 
 Callers can override `runner` and the lychee argument string with `link-args`.
@@ -57,7 +59,8 @@ and override `test-command`.
 ### `ci-jekyll.yml` — Jekyll sites
 
 Runs `ruby/setup-ruby` with Bundler caching, then builds the site with
-`bundle exec jekyll build --strict_front_matter`.
+`bundle exec jekyll build --strict_front_matter`. On macOS self-hosted runners,
+the workflow gives `ruby/setup-ruby` a writable per-job tool cache.
 
 Callers can override `runner`, `ruby-version`, `build-command`, and provide an
 optional `test-command` for site-specific structural checks. The workflow
