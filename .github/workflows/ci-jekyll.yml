@@ -44,17 +44,27 @@ jobs:
 
       - name: Set up Ruby
         if: runner.os == 'macOS'
+        env:
+          RUBY_VERSION: ${{ inputs['ruby-version'] }}
         run: |
           if ! command -v brew >/dev/null 2>&1; then
             echo "Homebrew is required to install Ruby on macOS self-hosted runners."
             exit 1
           fi
 
-          if ! brew list ruby >/dev/null 2>&1; then
-            brew install ruby
+          ruby_series="$(printf '%s\n' "$RUBY_VERSION" | awk -F. '{ print $1 "." $2 }')"
+          ruby_formula="ruby@${ruby_series}"
+
+          if ! brew info "$ruby_formula" >/dev/null 2>&1; then
+            echo "Homebrew formula ${ruby_formula} is unavailable."
+            exit 1
           fi
 
-          ruby_prefix="$(brew --prefix ruby)"
+          if ! brew list "$ruby_formula" >/dev/null 2>&1; then
+            brew install "$ruby_formula"
+          fi
+
+          ruby_prefix="$(brew --prefix "$ruby_formula")"
           echo "${ruby_prefix}/bin" >> "$GITHUB_PATH"
           export PATH="${ruby_prefix}/bin:$PATH"
 
