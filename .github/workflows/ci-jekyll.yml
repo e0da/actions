@@ -35,8 +35,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare Ruby tool cache
+        if: runner.os == 'macOS'
+        run: mkdir -p "$RUNNER_TEMP/ruby-tool-cache"
+
       - name: Set up Ruby
+        if: runner.os != 'macOS'
         uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ inputs['ruby-version'] }}
+          bundler-cache: true
+
+      - name: Set up Ruby
+        if: runner.os == 'macOS'
+        uses: ruby/setup-ruby@v1
+        env:
+          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/ruby-tool-cache
+          RUNNER_TOOL_CACHE: ${{ runner.temp }}/ruby-tool-cache
         with:
           ruby-version: ${{ inputs['ruby-version'] }}
           bundler-cache: true
@@ -44,8 +59,35 @@ jobs:
       - name: Install ripgrep
         run: |
           if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y ripgrep
+            sudo_cmd=""
+            if command -v sudo >/dev/null 2>&1; then
+              sudo_cmd="sudo"
+            fi
+
+            case "$(uname -s)" in
+              Darwin)
+                if ! command -v brew >/dev/null 2>&1; then
+                  echo "Homebrew is required to install ripgrep on macOS self-hosted runners."
+                  exit 1
+                fi
+                brew install ripgrep
+                ;;
+              Linux)
+                if command -v apt-get >/dev/null 2>&1; then
+                  $sudo_cmd apt-get update
+                  $sudo_cmd apt-get install -y ripgrep
+                elif command -v apk >/dev/null 2>&1; then
+                  $sudo_cmd apk add --no-cache ripgrep
+                else
+                  echo "No supported package manager found for ripgrep."
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "No supported ripgrep install path for $(uname -s)."
+                exit 1
+                ;;
+            esac
           fi
 
       - name: Build
