@@ -34,10 +34,16 @@ name: CI Rust
 #                         Default: false.
 #   nats-test-url       — Value exposed as NATS_TEST_URL for cargo commands.
 #                         Default: "".
+#   runner              — GitHub runner label for the Rust job.
+#                         Default: "ubuntu-latest".
 
 on:
   workflow_call:
     inputs:
+      runner:
+        required: false
+        type: string
+        default: ubuntu-latest
       toolchain:
         required: false
         type: string
@@ -74,7 +80,7 @@ on:
 jobs:
   build-and-test:
     name: Fmt / Clippy / Test / Build
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
 
@@ -101,12 +107,28 @@ jobs:
         # Verify sha256 against the official release attestation before bumping.
         env:
           SOPS_VERSION: v3.12.2
-          SOPS_SHA256: 14e2e1ba3bef31e74b70cf0b674f6443c80f6c5f3df15d05ffc57c34851b4998
+          RUNNER_ARCH: ${{ runner.arch }}
+          SOPS_LINUX_AMD64_SHA256: 14e2e1ba3bef31e74b70cf0b674f6443c80f6c5f3df15d05ffc57c34851b4998
+          SOPS_LINUX_ARM64_SHA256: f66de6f528dca946e910d74fa36a62a7714c11d0db16bd3c9bd8acf73b66704b
         run: |
           set -euo pipefail
-          url="https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64"
+          case "$RUNNER_ARCH" in
+            X64)
+              sops_arch=amd64
+              sops_sha256="$SOPS_LINUX_AMD64_SHA256"
+              ;;
+            ARM64)
+              sops_arch=arm64
+              sops_sha256="$SOPS_LINUX_ARM64_SHA256"
+              ;;
+            *)
+              echo "unsupported Linux runner architecture for sops install: ${RUNNER_ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          url="https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.${sops_arch}"
           curl --fail --silent --show-error --location --output /tmp/sops "$url"
-          echo "${SOPS_SHA256}  /tmp/sops" | sha256sum --check --status
+          echo "${sops_sha256}  /tmp/sops" | sha256sum --check --status
           sudo install -m 0755 /tmp/sops /usr/local/bin/sops
           sops --version --disable-version-check
 
@@ -116,15 +138,31 @@ jobs:
         # Verify sha256 against the official SHA256SUMS file before bumping.
         env:
           NATS_VERSION: v2.14.0
-          NATS_SHA256: 3d8b74dfad39af184c765a6dd120441ed1c648d6672eddf6b304f222661251b8
+          RUNNER_ARCH: ${{ runner.arch }}
+          NATS_LINUX_AMD64_SHA256: 3d8b74dfad39af184c765a6dd120441ed1c648d6672eddf6b304f222661251b8
+          NATS_LINUX_ARM64_SHA256: ce7dc5f7d97b70dabc38b13157fed28d7d06227860676143c15c62c5c297996c
         run: |
           set -euo pipefail
-          archive="nats-server-${NATS_VERSION}-linux-amd64.tar.gz"
+          case "$RUNNER_ARCH" in
+            X64)
+              nats_arch=amd64
+              nats_sha256="$NATS_LINUX_AMD64_SHA256"
+              ;;
+            ARM64)
+              nats_arch=arm64
+              nats_sha256="$NATS_LINUX_ARM64_SHA256"
+              ;;
+            *)
+              echo "unsupported Linux runner architecture for nats-server install: ${RUNNER_ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          archive="nats-server-${NATS_VERSION}-linux-${nats_arch}.tar.gz"
           url="https://github.com/nats-io/nats-server/releases/download/${NATS_VERSION}/${archive}"
           curl --fail --silent --show-error --location --output "/tmp/${archive}" "$url"
-          echo "${NATS_SHA256}  /tmp/${archive}" | sha256sum --check --status
-          tar -xzf "/tmp/${archive}" -C /tmp "nats-server-${NATS_VERSION}-linux-amd64/nats-server"
-          sudo install -m 0755 "/tmp/nats-server-${NATS_VERSION}-linux-amd64/nats-server" /usr/local/bin/nats-server
+          echo "${nats_sha256}  /tmp/${archive}" | sha256sum --check --status
+          tar -xzf "/tmp/${archive}" -C /tmp "nats-server-${NATS_VERSION}-linux-${nats_arch}/nats-server"
+          sudo install -m 0755 "/tmp/nats-server-${NATS_VERSION}-linux-${nats_arch}/nats-server" /usr/local/bin/nats-server
           nats-server --version
 
       - name: Start nats-server with JetStream
