@@ -3,6 +3,11 @@ name: CI TypeScript (Bun)
 on:
   workflow_call:
     inputs:
+      runner:
+        description: "GitHub runner label for the TypeScript/Bun job."
+        required: false
+        type: string
+        default: ubuntu-latest
       bun-version:
         description: "Bun version passed to oven-sh/setup-bun."
         required: false
@@ -42,7 +47,7 @@ on:
 jobs:
   build-and-test:
     name: Lint / Build / Check / Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v4
 

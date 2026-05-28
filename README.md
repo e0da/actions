@@ -35,9 +35,10 @@ script doesn't exist in `package.json`:
 - `bun run check` (tsc)
 - `bun test` (only if test files are found)
 
-Callers can override `lint-command`, `build-command`, `check-command`, and
-`test-command`, request a Playwright browser with `playwright-browser`, and pass
-newline-delimited non-secret CI environment entries through `env`.
+Callers can override `runner`, `lint-command`, `build-command`,
+`check-command`, and `test-command`, request a Playwright browser with
+`playwright-browser`, and pass newline-delimited non-secret CI environment
+entries through `env`.
 
 ### `ci-markdown.yml` — Markdown-heavy repos
 
@@ -84,9 +85,10 @@ Callers can override `fmt-command`, `validate-command`, `tofu-version`, and
 
 Runs `cargo fmt`, `cargo clippy`, `cargo nextest`, and `cargo build`.
 
-Callers can override the Rust toolchain, feature flags, test args, and apt
-system dependencies. For integration tests that need NATS, callers can set
-`start-nats-jetstream: true` and `nats-test-url: nats://localhost:4222`.
+Callers can override `runner`, the Rust toolchain, feature flags, test args,
+and apt system dependencies. For integration tests that need NATS, callers can
+set `start-nats-jetstream: true` and
+`nats-test-url: nats://localhost:4222`.
 
 ## How to adopt
 
