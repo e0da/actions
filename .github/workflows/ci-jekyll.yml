@@ -9,7 +9,7 @@ on:
         type: string
         default: ubuntu-latest
       ruby-version:
-        description: "Ruby version passed to ruby/setup-ruby."
+        description: "Ruby version passed to ruby/setup-ruby on non-macOS runners. macOS self-hosted runners use Homebrew Ruby."
         required: false
         type: string
         default: "3.2"
@@ -35,10 +35,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare Ruby tool cache
-        if: runner.os == 'macOS'
-        run: mkdir -p "$RUNNER_TEMP/ruby-tool-cache"
-
       - name: Set up Ruby
         if: runner.os != 'macOS'
         uses: ruby/setup-ruby@v1
@@ -48,13 +44,24 @@ jobs:
 
       - name: Set up Ruby
         if: runner.os == 'macOS'
-        uses: ruby/setup-ruby@v1
-        env:
-          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/ruby-tool-cache
-          RUNNER_TOOL_CACHE: ${{ runner.temp }}/ruby-tool-cache
-        with:
-          ruby-version: ${{ inputs['ruby-version'] }}
-          bundler-cache: true
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "Homebrew is required to install Ruby on macOS self-hosted runners."
+            exit 1
+          fi
+
+          if ! brew list ruby >/dev/null 2>&1; then
+            brew install ruby
+          fi
+
+          ruby_prefix="$(brew --prefix ruby)"
+          echo "${ruby_prefix}/bin" >> "$GITHUB_PATH"
+          export PATH="${ruby_prefix}/bin:$PATH"
+
+          ruby --version
+          gem install bundler --no-document
+          bundle config set --local path "$RUNNER_TEMP/bundle"
+          bundle install --jobs 4 --retry 3
 
       - name: Install ripgrep
         run: |
