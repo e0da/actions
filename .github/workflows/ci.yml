@@ -7,12 +7,23 @@ on:
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 concurrency:
   group: actions-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # PR-only provenance gate; push runs skip this job.
+  approval-gate:
+    if: github.event_name == 'pull_request'
+    uses: e0da/actions/.github/workflows/approval-gate.yml@main
+    with:
+      runner: puck-linux-arm64
+      allowed-labels: approved[agency]
+    secrets: inherit
+
   workflow-lint:
     name: Workflow Lint
     runs-on: [self-hosted, puck-linux-arm64]
