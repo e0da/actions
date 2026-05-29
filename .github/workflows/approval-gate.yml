@@ -33,6 +33,66 @@ jobs:
       pull-requests: read
       issues: read
     steps:
+      - name: Ensure GitHub CLI
+        shell: sh
+        env:
+          GH_CLI_VERSION: "2.93.0"
+        run: |
+          set -eu
+
+          if command -v gh >/dev/null 2>&1; then
+            echo "GitHub CLI already available: $(gh --version | head -n 1)"
+            exit 0
+          fi
+
+          os="$(uname -s)"
+          arch="$(uname -m)"
+          temp_root="${RUNNER_TEMP:-/tmp}"
+          tools_dir="${temp_root}/approval-gate-bin"
+          mkdir -p "$tools_dir"
+
+          install_linux_tarball() {
+            asset_arch="$1"
+            archive="gh_${GH_CLI_VERSION}_linux_${asset_arch}.tar.gz"
+            extract_dir="${temp_root}/gh_${GH_CLI_VERSION}_linux_${asset_arch}"
+
+            curl -fsSL \
+              "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/${archive}" \
+              -o "${temp_root}/${archive}"
+            tar -xzf "${temp_root}/${archive}" -C "$temp_root"
+            cp "${extract_dir}/bin/gh" "${tools_dir}/gh"
+            chmod 0755 "${tools_dir}/gh"
+          }
+
+          case "${os}:${arch}" in
+            Linux:aarch64|Linux:arm64)
+              install_linux_tarball arm64
+              ;;
+            Linux:x86_64|Linux:amd64)
+              install_linux_tarball amd64
+              ;;
+            Darwin:*)
+              if command -v brew >/dev/null 2>&1; then
+                brew install gh
+                exit 0
+              fi
+              echo "::error::GitHub CLI is missing and automatic install is only supported for Linux tarballs or macOS runners with Homebrew."
+              exit 1
+              ;;
+            *)
+              echo "::error::GitHub CLI is missing and automatic install does not support ${os}/${arch}."
+              exit 1
+              ;;
+          esac
+
+          if [ -z "${GITHUB_PATH:-}" ]; then
+            echo "::error::GITHUB_PATH is unavailable; cannot expose installed gh to later steps."
+            exit 1
+          fi
+
+          echo "$tools_dir" >> "$GITHUB_PATH"
+          "${tools_dir}/gh" --version | head -n 1
+
       - name: Evaluate approval gate
         env:
           GH_TOKEN: ${{ github.token }}

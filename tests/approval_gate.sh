@@ -5,6 +5,39 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
 gate="$tmpdir/approval-gate.sh"
+ensure_gh="$tmpdir/ensure-github-cli.sh"
+
+extract_run_block() {
+  step_name="$1"
+  output_path="$2"
+
+  awk -v step_name="$step_name" '
+    $0 == "      - name: " step_name {
+      in_step=1
+      next
+    }
+    in_step && /^        run: \|$/ {
+      in_run=1
+      next
+    }
+    in_run {
+      if ($0 ~ /^          /) {
+        sub(/^          /, "")
+        print
+        next
+      }
+      if ($0 == "") {
+        print
+        next
+      }
+      exit
+    }
+  ' .github/workflows/approval-gate.yml > "$output_path"
+}
+
+extract_run_block "Ensure GitHub CLI" "$ensure_gh"
+sh -n "$ensure_gh"
+
 awk '
   /^      - name: Evaluate approval gate$/ {
     in_step=1
