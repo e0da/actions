@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: "mix ci"
+      cache-mode:
+        description: "Mix dependency cache policy. read-write preserves current behavior; off skips the cache step."
+        required: false
+        type: string
+        default: read-write
 
 jobs:
   mix:
@@ -38,6 +43,21 @@ jobs:
     env:
       MIX_ENV: test
     steps:
+      - name: Validate cache mode
+        env:
+          CACHE_MODE: ${{ inputs.cache-mode }}
+        run: |
+          set -eu
+
+          case "$CACHE_MODE" in
+            read-write|off)
+              ;;
+            *)
+              echo "::error::Unknown cache-mode '${CACHE_MODE}'. Expected one of: read-write, off."
+              exit 1
+              ;;
+          esac
+
       - uses: actions/checkout@v5
 
       - name: Set up BEAM
@@ -47,6 +67,7 @@ jobs:
           elixir-version: ${{ inputs.elixir-version }}
 
       - name: Cache Mix deps
+        if: inputs.cache-mode == 'read-write'
         uses: actions/cache@v5
         with:
           path: |
