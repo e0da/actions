@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: ""
+      runner-manifest:
+        description: "Optional puck-linux-runner-image-contract.v1 JSON used to validate requested runner capabilities."
+        required: false
+        type: string
+        default: ""
       tofu-version:
         description: "OpenTofu version passed to opentofu/setup-opentofu."
         required: false
@@ -45,8 +50,10 @@ jobs:
         env:
           RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
           RUNNER_CAPABILITIES: ${{ inputs['runner-capabilities'] }}
+          RUNNER_MANIFEST: ${{ inputs['runner-manifest'] }}
           OBSERVED_RUNNER_OS: ${{ runner.os }}
           OBSERVED_RUNNER_ARCH: ${{ runner.arch }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -eu
 
@@ -79,6 +86,60 @@ jobs:
             puck-macos-arm64) require_runner macOS ARM64 ;;
           esac
 
+          validate_runner_manifest() {
+            [ -n "$RUNNER_MANIFEST" ] || return 0
+
+            if ! command -v jq >/dev/null 2>&1; then
+              echo "::error::runner-manifest was provided, but jq was not found."
+              exit 1
+            fi
+
+            schema="$(printf '%s' "$RUNNER_MANIFEST" | jq -r '.schema_version // ""')"
+            if [ "$schema" != "puck-linux-runner-image-contract.v1" ]; then
+              echo "::error::runner-manifest schema_version must be puck-linux-runner-image-contract.v1, got '${schema:-<missing>}'."
+              exit 1
+            fi
+
+            repo="${REPOSITORY#*/}"
+            runner_entry="$(printf '%s' "$RUNNER_MANIFEST" | jq -c --arg repo "$repo" '.runners[]? | select(.runner_identity.repo == $repo)' | sed -n '1p')"
+            if [ -z "$runner_entry" ]; then
+              echo "::error::runner-manifest missing runners[].runner_identity.repo entry for '${repo}'."
+              exit 1
+            fi
+
+            manifest_profile="$(printf '%s' "$runner_entry" | jq -r '.runner_identity.runner_profile // ""')"
+            if [ -n "$RUNNER_PROFILE" ] && [ "$manifest_profile" != "$RUNNER_PROFILE" ]; then
+              echo "::error::runner-manifest runner_identity.runner_profile expected '${RUNNER_PROFILE}', got '${manifest_profile:-<missing>}'."
+              exit 1
+            fi
+
+            manifest_os="$(printf '%s' "$runner_entry" | jq -r '.intended_contract_state.runner_os // ""')"
+            if [ -n "$manifest_os" ] && [ "$manifest_os" != "$OBSERVED_RUNNER_OS" ]; then
+              echo "::error::runner-manifest intended_contract_state.runner_os expected '${OBSERVED_RUNNER_OS}', got '${manifest_os}'."
+              exit 1
+            fi
+
+            manifest_arch="$(printf '%s' "$runner_entry" | jq -r '.intended_contract_state.runner_arch // ""')"
+            if [ -n "$manifest_arch" ] && [ "$manifest_arch" != "$OBSERVED_RUNNER_ARCH" ]; then
+              echo "::error::runner-manifest intended_contract_state.runner_arch expected '${OBSERVED_RUNNER_ARCH}', got '${manifest_arch}'."
+              exit 1
+            fi
+
+            for capability in $RUNNER_CAPABILITIES; do
+              tool_status="$(printf '%s' "$runner_entry" | jq -r --arg name "$capability" '([.tools[]? | select(.name == $name)] | first | .observed.status) // "missing-tool-entry"')"
+              if [ "$tool_status" != "present" ]; then
+                echo "::error::runner-manifest tools.${capability}.observed.status expected 'present', got '${tool_status}'."
+                exit 1
+              fi
+
+              tool_version="$(printf '%s' "$runner_entry" | jq -r --arg name "$capability" '([.tools[]? | select(.name == $name)] | first | .observed.version) // ""')"
+              if [ -z "$tool_version" ]; then
+                echo "::error::runner-manifest tools.${capability}.observed.version expected a non-empty version."
+                exit 1
+              fi
+            done
+          }
+
           for capability in $RUNNER_CAPABILITIES; do
             case "$capability" in
               gh|ruby|brew|make)
@@ -93,6 +154,8 @@ jobs:
                 ;;
             esac
           done
+
+          validate_runner_manifest
 
           echo "Runner contract OK: profile='${RUNNER_PROFILE:-<none>}' capabilities='${RUNNER_CAPABILITIES:-<none>}' os='${OBSERVED_RUNNER_OS}' arch='${OBSERVED_RUNNER_ARCH}'."
 
