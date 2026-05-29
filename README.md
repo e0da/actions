@@ -31,6 +31,13 @@ stack process for repos that use Graphite.
 Callers can override `runner` when both baseline jobs should run on a different
 runner label, for example `puck-linux-arm64`.
 
+### Planned approval gate
+
+M10 will add an opt-in approval gate that accepts either a real GitHub
+`APPROVED` review or a real allowed `approved[...]` GitHub label. The contract is
+documented in [`docs/samos-ci-m10-approval-gate-contract.md`](docs/samos-ci-m10-approval-gate-contract.md).
+The gate is not implemented yet.
+
 ### `ci-typescript-bun.yml` — TypeScript/Bun repos
 
 Runs `bun install`, exports optional CI env entries, then skips any step whose
