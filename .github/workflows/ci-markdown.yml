@@ -141,6 +141,26 @@ jobs:
               exit 1
             fi
 
+            if [ "$manifest_profile" = "puck-linux-arm64" ]; then
+              runner_local_bin_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.path // ""')"
+              if [ "$runner_local_bin_path" != "/runner/.local/bin" ]; then
+                echo "::error::runner-manifest path_policy.runner_local_bin.path expected '/runner/.local/bin', got '${runner_local_bin_path:-<missing>}'."
+                exit 1
+              fi
+
+              runner_local_bin_state="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.state // ""')"
+              if [ "$runner_local_bin_state" != "directory" ]; then
+                echo "::error::runner-manifest path_policy.runner_local_bin.state expected 'directory', got '${runner_local_bin_state:-<missing>}'."
+                exit 1
+              fi
+
+              if ! printf '%s' "$runner_entry" | jq -e '.path_policy.runner_local_bin.in_path == true' >/dev/null; then
+                runner_local_bin_in_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.in_path // false')"
+                echo "::error::runner-manifest path_policy.runner_local_bin.in_path expected boolean true, got '${runner_local_bin_in_path}'."
+                exit 1
+              fi
+            fi
+
             manifest_capabilities="$RUNNER_CAPABILITIES"
             if [ "$TOOL_MODE" = runner-preinstalled ]; then
               manifest_capabilities="${manifest_capabilities}${manifest_capabilities:+ }lychee"
@@ -319,6 +339,26 @@ jobs:
             if [ -n "$manifest_arch" ] && [ "$manifest_arch" != "$OBSERVED_RUNNER_ARCH" ]; then
               echo "::error::runner-manifest intended_contract_state.runner_arch expected '${OBSERVED_RUNNER_ARCH}', got '${manifest_arch}'."
               exit 1
+            fi
+
+            if [ "$manifest_profile" = "puck-linux-arm64" ]; then
+              runner_local_bin_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.path // ""')"
+              if [ "$runner_local_bin_path" != "/runner/.local/bin" ]; then
+                echo "::error::runner-manifest path_policy.runner_local_bin.path expected '/runner/.local/bin', got '${runner_local_bin_path:-<missing>}'."
+                exit 1
+              fi
+
+              runner_local_bin_state="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.state // ""')"
+              if [ "$runner_local_bin_state" != "directory" ]; then
+                echo "::error::runner-manifest path_policy.runner_local_bin.state expected 'directory', got '${runner_local_bin_state:-<missing>}'."
+                exit 1
+              fi
+
+              if ! printf '%s' "$runner_entry" | jq -e '.path_policy.runner_local_bin.in_path == true' >/dev/null; then
+                runner_local_bin_in_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.in_path // false')"
+                echo "::error::runner-manifest path_policy.runner_local_bin.in_path expected boolean true, got '${runner_local_bin_in_path}'."
+                exit 1
+              fi
             fi
 
             for capability in $RUNNER_CAPABILITIES; do
