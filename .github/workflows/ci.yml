@@ -70,5 +70,6 @@ jobs:
           set -eu
           PATH="$RUNNER_TEMP/actions-self-ci/bin:$PATH"
           shellcheck tests/*.sh
+          sh tests/approval_gate.sh
           sh tests/hosted_drift_report.sh
           sh tests/runner_manifest_validation.sh
