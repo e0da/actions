@@ -26,14 +26,18 @@ When `runner-manifest` is provided, the workflow validation step:
 - compares `runner_identity.runner_profile` with `runner-profile` when provided
 - compares intended runner OS and architecture with GitHub's observed
   `runner.os` and `runner.arch`
+- for `puck-linux-arm64` entries, requires `path_policy.runner_local_bin.path`
+  to be `/runner/.local/bin`, `path_policy.runner_local_bin.state` to be
+  `directory`, and `path_policy.runner_local_bin.in_path` to be boolean `true`
 - checks every requested `runner-capabilities` token against the manifest tool
   entry
 - fails if a requested tool is absent or has no observed version
 - for Markdown `tool-mode: runner-preinstalled`, treats `lychee` as an implied
   manifest capability
 
-This gives failures like `tools.lychee.observed.version` or
-`intended_contract_state.runner_arch`, rather than later ad hoc PATH errors.
+This gives failures like `tools.lychee.observed.version`,
+`intended_contract_state.runner_arch`, or
+`path_policy.runner_local_bin.in_path`, rather than later ad hoc PATH errors.
 
 ## Non-Goals
 

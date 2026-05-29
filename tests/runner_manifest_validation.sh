@@ -43,6 +43,26 @@ validate_runner_manifest() {
     return 1
   fi
 
+  if [ "$manifest_profile" = "puck-linux-arm64" ]; then
+    runner_local_bin_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.path // ""')"
+    if [ "$runner_local_bin_path" != "/runner/.local/bin" ]; then
+      echo "::error::runner-manifest path_policy.runner_local_bin.path expected '/runner/.local/bin', got '${runner_local_bin_path:-<missing>}'."
+      return 1
+    fi
+
+    runner_local_bin_state="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.state // ""')"
+    if [ "$runner_local_bin_state" != "directory" ]; then
+      echo "::error::runner-manifest path_policy.runner_local_bin.state expected 'directory', got '${runner_local_bin_state:-<missing>}'."
+      return 1
+    fi
+
+    if ! printf '%s' "$runner_entry" | jq -e '.path_policy.runner_local_bin.in_path == true' >/dev/null; then
+      runner_local_bin_in_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.in_path // false')"
+      echo "::error::runner-manifest path_policy.runner_local_bin.in_path expected boolean true, got '${runner_local_bin_in_path}'."
+      return 1
+    fi
+  fi
+
   manifest_capabilities="$RUNNER_CAPABILITIES"
   if [ "${TOOL_MODE:-}" = runner-preinstalled ]; then
     manifest_capabilities="${manifest_capabilities}${manifest_capabilities:+ }lychee"
@@ -76,6 +96,13 @@ cat > "$manifest_path" <<'JSON'
       "intended_contract_state": {
         "runner_os": "Linux",
         "runner_arch": "ARM64"
+      },
+      "path_policy": {
+        "runner_local_bin": {
+          "path": "/runner/.local/bin",
+          "state": "directory",
+          "in_path": true
+        }
       },
       "tools": [
         {
@@ -147,5 +174,17 @@ validate_runner_manifest
 
 RUNNER_MANIFEST="$(jq '(.runners[0].tools[] | select(.name == "lychee") | .observed.status) = "missing"' "$manifest_path")"
 expect_failure implied_lychee_missing "tools.lychee.observed.status expected 'present', got 'missing'" validate_runner_manifest
+
+RUNNER_MANIFEST="$(jq '.runners[0].path_policy.runner_local_bin.path = "/tmp/bin"' "$manifest_path")"
+expect_failure runner_local_bin_wrong_path "path_policy.runner_local_bin.path expected '/runner/.local/bin', got '/tmp/bin'" validate_runner_manifest
+
+RUNNER_MANIFEST="$(jq '.runners[0].path_policy.runner_local_bin.state = "missing"' "$manifest_path")"
+expect_failure runner_local_bin_missing "path_policy.runner_local_bin.state expected 'directory', got 'missing'" validate_runner_manifest
+
+RUNNER_MANIFEST="$(jq '.runners[0].path_policy.runner_local_bin.in_path = false' "$manifest_path")"
+expect_failure runner_local_bin_not_in_path "path_policy.runner_local_bin.in_path expected boolean true, got 'false'" validate_runner_manifest
+
+RUNNER_MANIFEST="$(jq '.runners[0].path_policy.runner_local_bin.in_path = "true"' "$manifest_path")"
+expect_failure runner_local_bin_in_path_wrong_type "path_policy.runner_local_bin.in_path expected boolean true, got 'true'" validate_runner_manifest
 
 echo "runner manifest validation ok"
