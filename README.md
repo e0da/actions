@@ -4,6 +4,14 @@ Shared CI/CD workflows and custom actions for e0da repos.
 
 ## Workflows
 
+### `ci.yml` — Repository self-CI
+
+Runs on pull requests and pushes to `main` in this repository. It validates the
+shared workflow files with `actionlint` and runs the shell fixture suites that
+exercise hosted-drift and runner-manifest behavior. The other `ci-*`,
+`deploy-*`, and `release-*` workflow files remain reusable caller contracts; this
+workflow is the source-repo gate for changes to those contracts.
+
 ### `puck-linux-arm64-smoke.yml` — Manual runner proof
 
 Manual `workflow_dispatch` smoke test for the `puck-linux-arm64` self-hosted
