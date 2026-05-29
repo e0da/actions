@@ -73,11 +73,14 @@ installs `rg` so those checks can use the shared fast-search baseline.
 
 ### `ci-elixir.yml` — Elixir/Mix repos
 
-Runs `erlef/setup-beam`, caches `deps` and `_build`, installs test
-dependencies, then runs `mix ci` by default.
+Runs `erlef/setup-beam` by default, caches `deps` and `_build`, installs test
+dependencies, then runs `mix ci` by default. Trusted self-hosted callers can
+set `beam-mode: runner-preinstalled` when the runner image owns the requested
+BEAM version. Callers can also set `cache-mode: off` for measured cache
+experiments.
 
 Callers can override `runner`, `otp-version`, `elixir-version`,
-`deps-command`, and `ci-command`.
+`deps-command`, `ci-command`, `cache-mode`, and `beam-mode`.
 
 ### `ci-opentofu.yml` — OpenTofu repos
 

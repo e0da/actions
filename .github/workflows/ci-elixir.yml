@@ -96,6 +96,7 @@ jobs:
           mix --version
 
       - name: Cache Mix deps
+        id: mix-cache
         if: inputs.cache-mode == 'read-write'
         uses: actions/cache@v5
         with:
@@ -106,6 +107,57 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-otp-${{ inputs.otp-version }}-elixir-${{ inputs.elixir-version }}-mix-
             ${{ runner.os }}-mix-
+
+      - name: Report Elixir CI policy
+        env:
+          BEAM_MODE: ${{ inputs.beam-mode }}
+          CACHE_EXACT_KEY_HIT: ${{ steps.mix-cache.outputs.cache-hit }}
+          CACHE_KEY: ${{ runner.os }}-otp-${{ inputs.otp-version }}-elixir-${{ inputs.elixir-version }}-mix-${{ hashFiles('mix.lock') }}
+          CACHE_MODE: ${{ inputs.cache-mode }}
+          CI_COMMAND: ${{ inputs.ci-command }}
+          DEPS_COMMAND: ${{ inputs.deps-command }}
+          ELIXIR_VERSION: ${{ inputs.elixir-version }}
+          OTP_VERSION: ${{ inputs.otp-version }}
+          RUNNER_LABEL: ${{ inputs.runner }}
+        run: |
+          set -eu
+
+          case "${CACHE_EXACT_KEY_HIT:-}" in
+            true)
+              cache_hit="true"
+              ;;
+            false)
+              cache_hit="false-or-restore-key"
+              ;;
+            *)
+              cache_hit="skipped"
+              ;;
+          esac
+
+          {
+            echo "Elixir CI policy:"
+            echo "- runner: ${RUNNER_LABEL}"
+            echo "- runner_os: ${RUNNER_OS}"
+            echo "- runner_arch: ${RUNNER_ARCH}"
+            echo "- otp_version: ${OTP_VERSION}"
+            echo "- elixir_version: ${ELIXIR_VERSION}"
+            echo "- beam_mode: ${BEAM_MODE}"
+            echo "- cache_mode: ${CACHE_MODE}"
+            echo "- cache_key: ${CACHE_KEY}"
+            echo "- cache_exact_key_hit: ${cache_hit}"
+            echo "- deps_command: ${DEPS_COMMAND}"
+            echo "- ci_command: ${CI_COMMAND}"
+          } | tee /tmp/elixir-ci-policy.txt
+
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## Elixir CI policy"
+              echo
+              echo '```text'
+              cat /tmp/elixir-ci-policy.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Install deps
         run: ${{ inputs.deps-command }}
