@@ -165,6 +165,10 @@ No write permission is required for the gate. The gate observes approval state;
 it does not create labels, post comments, mutate PR metadata, or change branch
 protection.
 
+The gate must not require `gh` as a preinstalled runner capability. If the
+selected runner does not already expose GitHub CLI on `PATH`, the reusable
+workflow installs it before querying the live PR APIs.
+
 ## Implementation Notes
 
 The implementation should query GitHub APIs for the live PR state instead of

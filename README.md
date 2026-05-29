@@ -40,6 +40,9 @@ documented in [`docs/samos-ci-m10-approval-gate-contract.md`](docs/samos-ci-m10-
 
 Callers can override `runner`, configure exact `allowed-labels`, and choose
 whether non-PR events fail with `require-pr-event`.
+The reusable job installs GitHub CLI on Linux self-hosted runners when `gh` is
+not already on `PATH`, so callers do not need to treat `gh` as a preinstalled
+runner capability.
 
 ```yaml
 jobs:
