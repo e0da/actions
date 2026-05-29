@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: ""
+      tool-mode:
+        description: "Tool setup mode for markdown link checking."
+        required: false
+        type: string
+        default: workflow-install
       link-args:
         description: "Arguments passed to lychee."
         required: false
@@ -39,10 +44,19 @@ jobs:
         env:
           RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
           RUNNER_CAPABILITIES: ${{ inputs['runner-capabilities'] }}
+          TOOL_MODE: ${{ inputs['tool-mode'] }}
           OBSERVED_RUNNER_OS: ${{ runner.os }}
           OBSERVED_RUNNER_ARCH: ${{ runner.arch }}
         run: |
           set -eu
+
+          case "$TOOL_MODE" in
+            workflow-install|runner-preinstalled) ;;
+            *)
+              echo "::error::Unknown tool-mode '${TOOL_MODE}'. Expected one of: workflow-install, runner-preinstalled."
+              exit 1
+              ;;
+          esac
 
           case "$RUNNER_PROFILE" in
             ""|hosted-linux|puck-linux-arm64|puck-macos-arm64) ;;
@@ -75,25 +89,30 @@ jobs:
 
           for capability in $RUNNER_CAPABILITIES; do
             case "$capability" in
-              gh|ruby|brew|make)
+              gh|ruby|brew|make|lychee)
                 if ! command -v "$capability" >/dev/null 2>&1; then
                   echo "::error::runner-capabilities requested '${capability}', but command '${capability}' was not found."
                   exit 1
                 fi
                 ;;
               *)
-                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make."
+                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make, lychee."
                 exit 1
                 ;;
             esac
           done
 
-          echo "Runner contract OK: profile='${RUNNER_PROFILE:-<none>}' capabilities='${RUNNER_CAPABILITIES:-<none>}' os='${OBSERVED_RUNNER_OS}' arch='${OBSERVED_RUNNER_ARCH}'."
+          if [ "$TOOL_MODE" = runner-preinstalled ] && ! command -v lychee >/dev/null 2>&1; then
+            echo "::error::tool-mode runner-preinstalled requires lychee on PATH."
+            exit 1
+          fi
+
+          echo "Runner contract OK: profile='${RUNNER_PROFILE:-<none>}' capabilities='${RUNNER_CAPABILITIES:-<none>}' tool-mode='${TOOL_MODE}' os='${OBSERVED_RUNNER_OS}' arch='${OBSERVED_RUNNER_ARCH}'."
 
       - uses: actions/checkout@v5
 
       - name: Check links
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs['tool-mode'] == 'workflow-install'
         uses: lycheeverse/lychee-action@v2
         with:
           args: ${{ inputs['link-args'] }}
@@ -101,8 +120,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check links with preinstalled lychee
+        if: runner.os == 'Linux' && inputs['tool-mode'] == 'runner-preinstalled'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LYCHEE_ARGS: ${{ inputs['link-args'] }}
+        run: bash -lc "lychee ${LYCHEE_ARGS}"
+
       - name: Install lychee
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && inputs['tool-mode'] == 'workflow-install'
         run: |
           if command -v lychee >/dev/null 2>&1; then
             exit 0
@@ -172,14 +198,14 @@ jobs:
 
           for capability in $RUNNER_CAPABILITIES; do
             case "$capability" in
-              gh|ruby|brew|make)
+              gh|ruby|brew|make|lychee)
                 if ! command -v "$capability" >/dev/null 2>&1; then
                   echo "::error::runner-capabilities requested '${capability}', but command '${capability}' was not found."
                   exit 1
                 fi
                 ;;
               *)
-                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make."
+                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make, lychee."
                 exit 1
                 ;;
             esac

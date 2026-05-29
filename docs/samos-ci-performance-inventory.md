@@ -321,8 +321,10 @@ profile can be additive, not a replacement, so existing callers keep working.
 
 ### `tool-mode`
 
-Hypothesis: workflows need an explicit tool setup policy such as `hosted-setup`,
-`prefer-preinstalled`, or `force-install`.
+Hypothesis: workflows need an explicit tool setup policy. The first shipped
+contract uses `workflow-install` for current hosted/workflow-managed setup and
+`runner-preinstalled` when the caller wants to require tools already present on
+the selected runner.
 
 Evidence:
 
@@ -473,9 +475,9 @@ silently.
    deploy, and architecture checks for Rust installers. This makes tool-mode
    decisions explicit instead of relying on accidental runner contents.
 3. Add `tool-mode` to Markdown, Jekyll, and OpenTofu with default
-   `hosted-setup`; let Puck callers opt into `prefer-preinstalled` only after
-   runner capabilities are documented. This targets repeated Homebrew/setup
-   action overhead in the active `wiki` and `ops` lanes.
+   `workflow-install`; let Puck callers opt into `runner-preinstalled` only
+   after runner capabilities are documented. This targets repeated
+   Homebrew/setup action overhead in the active `wiki` and `ops` lanes.
 4. Split `clean-mode` for `deploy-compose` into safety cleanup that always
    remains on and expensive refresh behavior that can be policy-controlled.
    Preserve decrypted env and Docker credential cleanup regardless of mode.
