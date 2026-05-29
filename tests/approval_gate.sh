@@ -171,33 +171,33 @@ expect_success \
   123 \
   true
 
-expect_failure \
+expect_success \
   unallowed_approval_label \
-  "approval gate failed" \
   "approved[other]" \
   "" \
   "approved[agency]" \
   123 \
   true
+grep -F "Approval report found no merge approval signal." "$tmpdir/unallowed_approval_label.out" >/dev/null
 grep -F "Ignored approval labels: approved[other]" "$tmpdir/unallowed_approval_label.out" >/dev/null
 
-expect_failure \
+expect_success \
   ordinary_label_only \
-  "approval gate failed" \
   "needs-review" \
   "" \
   "approved[agency]" \
   123 \
   true
+grep -F "Approval report found no merge approval signal." "$tmpdir/ordinary_label_only.out" >/dev/null
 
-expect_failure \
+expect_success \
   comment_text_absent_from_api \
-  "approval gate failed" \
   "" \
   "" \
   "approved[agency]" \
   123 \
   true
+grep -F "Agency merge authority must block merge until a review record or approved[...] label exists." "$tmpdir/comment_text_absent_from_api.out" >/dev/null
 
 expect_failure \
   invalid_allowed_label \
@@ -208,14 +208,14 @@ expect_failure \
   123 \
   true
 
-expect_failure \
+expect_success \
   missing_pr_required \
-  "approval gate requires pull request context" \
   "" \
   "" \
   "approved[agency]" \
   "" \
   true
+grep -F "Approval report skipped outside pull request context." "$tmpdir/missing_pr_required.out" >/dev/null
 
 expect_success \
   missing_pr_not_required \
@@ -224,6 +224,6 @@ expect_success \
   "approved[agency]" \
   "" \
   false
-grep -F "Approval gate skipped outside pull request context." "$tmpdir/missing_pr_not_required.out" >/dev/null
+grep -F "Approval report skipped outside pull request context." "$tmpdir/missing_pr_not_required.out" >/dev/null
 
 echo "approval gate fixtures ok"

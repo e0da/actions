@@ -31,15 +31,19 @@ stack process for repos that use Graphite.
 Callers can override `runner` when both baseline jobs should run on a different
 runner label, for example `puck-linux-arm64`.
 
-### `approval-gate.yml` — Opt-in review provenance gate
+### `approval-gate.yml` — Advisory approval report
 
-Opt-in gate that accepts either a real GitHub `APPROVED` review or a real
-allowed `approved[...]` GitHub label. It inspects live GitHub review and label
-state; comments containing approval-looking text do not count. The contract is
+Advisory report that accepts either a real GitHub `APPROVED` review or a real
+allowed `approved[...]` GitHub label as merge-approval evidence. It inspects
+live GitHub review and label state; comments containing approval-looking text
+do not count. The current contract is
 documented in [`docs/samos-ci-m10-approval-gate-contract.md`](docs/samos-ci-m10-approval-gate-contract.md).
 
-Callers can override `runner`, configure exact `allowed-labels`, and choose
-whether non-PR events fail with `require-pr-event`.
+Missing approval evidence does not fail CI. CI remains a build/test health
+surface; Agency and Graphite merge loops enforce approval before `gt merge`.
+Do not add this job as a required status check.
+
+Callers can override `runner` and configure exact `allowed-labels`.
 The reusable job installs GitHub CLI on Linux self-hosted runners when `gh` is
 not already on `PATH`, so callers do not need to treat `gh` as a preinstalled
 runner capability.

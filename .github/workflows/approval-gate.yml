@@ -1,4 +1,4 @@
-name: Approval Gate
+name: Approval Report
 
 on:
   workflow_call:
@@ -9,24 +9,24 @@ on:
         type: string
         default: puck-linux-arm64
       allowed-labels:
-        description: "Comma- or newline-delimited exact approved[...] labels that may satisfy the gate."
+        description: "Comma- or newline-delimited exact approved[...] labels to report as merge approval signals."
         required: false
         type: string
         default: approved[agency]
       require-pr-event:
-        description: "When true, fail if the workflow is not running for a pull request."
+        description: "Deprecated compatibility input. Non-PR events are reported and skipped successfully."
         required: false
         type: boolean
         default: true
       report-mode:
-        description: "Human-readable output mode. Does not change pass/fail semantics."
+        description: "Human-readable output mode. Does not change exit status for missing approval."
         required: false
         type: string
         default: summary
 
 jobs:
   approval-gate:
-    name: Approval Gate
+    name: Approval Report
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -165,12 +165,7 @@ jobs:
           done < "$allowed_file"
 
           if [ -z "${PULL_REQUEST_NUMBER:-}" ]; then
-            if [ "$REQUIRE_PR_EVENT" = true ]; then
-              echo "::error::approval gate requires pull request context."
-              exit 1
-            fi
-
-            echo "Approval gate skipped outside pull request context."
+            echo "Approval report skipped outside pull request context."
             exit 0
           fi
 
@@ -223,12 +218,18 @@ jobs:
           summary_file="${GITHUB_STEP_SUMMARY:-}"
           write_summary() {
             if [ -n "$summary_file" ]; then
+              approval_signal="missing; Agency merge authority must block merge"
+              if [ -s "$matched_labels_file" ] || [ -s "$approved_reviewers_file" ]; then
+                approval_signal="present"
+              fi
+
               {
-                echo "## Approval Gate"
+                echo "## Approval Report"
                 echo
                 echo "| Field | Value |"
                 echo "| --- | --- |"
                 echo "| Pull request | #${PULL_REQUEST_NUMBER} |"
+                echo "| Merge approval signal | ${approval_signal} |"
                 echo "| Allowed labels | $(join_file "$allowed_file") |"
                 echo "| Matched labels | $(join_file "$matched_labels_file") |"
                 echo "| Ignored approval labels | $(join_file "$ignored_approval_labels_file") |"
@@ -240,7 +241,7 @@ jobs:
           write_summary
 
           if [ -s "$matched_labels_file" ] || [ -s "$approved_reviewers_file" ]; then
-            echo "Approval gate passed."
+            echo "Approval report found approval signal."
             if [ -s "$approved_reviewers_file" ]; then
               echo "Approved review signal: $(join_file "$approved_reviewers_file")"
             fi
@@ -250,8 +251,10 @@ jobs:
             exit 0
           fi
 
-          echo "::error::approval gate failed: expected a real APPROVED review or a real allowed approved[...] label."
+          echo "::notice::approval report found no merge approval signal; CI remains healthy."
+          echo "Approval report found no merge approval signal."
+          echo "Agency merge authority must block merge until a review record or approved[...] label exists."
           if [ -s "$ignored_approval_labels_file" ]; then
             echo "Ignored approval labels: $(join_file "$ignored_approval_labels_file")"
           fi
-          exit 1
+          exit 0
