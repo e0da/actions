@@ -49,7 +49,7 @@ jobs:
     name: Lint / Build / Check / Test
     runs-on: ${{ inputs.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
