@@ -35,6 +35,61 @@ jobs:
     name: Broken Link Check
     runs-on: ${{ inputs.runner }}
     steps:
+      - name: Validate runner contract
+        env:
+          RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
+          RUNNER_CAPABILITIES: ${{ inputs['runner-capabilities'] }}
+          OBSERVED_RUNNER_OS: ${{ runner.os }}
+          OBSERVED_RUNNER_ARCH: ${{ runner.arch }}
+        run: |
+          set -eu
+
+          case "$RUNNER_PROFILE" in
+            ""|hosted-linux|puck-linux-arm64|puck-macos-arm64) ;;
+            *)
+              echo "::error::Unknown runner-profile '${RUNNER_PROFILE}'. Expected one of: hosted-linux, puck-linux-arm64, puck-macos-arm64."
+              exit 1
+              ;;
+          esac
+
+          require_runner() {
+            expected_os="$1"
+            expected_arch="${2:-}"
+
+            if [ "$OBSERVED_RUNNER_OS" != "$expected_os" ]; then
+              echo "::error::runner-profile '${RUNNER_PROFILE}' requires runner.os '${expected_os}', got '${OBSERVED_RUNNER_OS}'."
+              exit 1
+            fi
+
+            if [ -n "$expected_arch" ] && [ "$OBSERVED_RUNNER_ARCH" != "$expected_arch" ]; then
+              echo "::error::runner-profile '${RUNNER_PROFILE}' requires runner.arch '${expected_arch}', got '${OBSERVED_RUNNER_ARCH}'."
+              exit 1
+            fi
+          }
+
+          case "$RUNNER_PROFILE" in
+            hosted-linux) require_runner Linux ;;
+            puck-linux-arm64) require_runner Linux ARM64 ;;
+            puck-macos-arm64) require_runner macOS ARM64 ;;
+          esac
+
+          for capability in $RUNNER_CAPABILITIES; do
+            case "$capability" in
+              gh|ruby|brew|make)
+                if ! command -v "$capability" >/dev/null 2>&1; then
+                  echo "::error::runner-capabilities requested '${capability}', but command '${capability}' was not found."
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make."
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Runner contract OK: profile='${RUNNER_PROFILE:-<none>}' capabilities='${RUNNER_CAPABILITIES:-<none>}' os='${OBSERVED_RUNNER_OS}' arch='${OBSERVED_RUNNER_ARCH}'."
+
       - uses: actions/checkout@v5
 
       - name: Check links
@@ -77,6 +132,61 @@ jobs:
     name: YAML Frontmatter Validation
     runs-on: ${{ inputs.runner }}
     steps:
+      - name: Validate runner contract
+        env:
+          RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
+          RUNNER_CAPABILITIES: ${{ inputs['runner-capabilities'] }}
+          OBSERVED_RUNNER_OS: ${{ runner.os }}
+          OBSERVED_RUNNER_ARCH: ${{ runner.arch }}
+        run: |
+          set -eu
+
+          case "$RUNNER_PROFILE" in
+            ""|hosted-linux|puck-linux-arm64|puck-macos-arm64) ;;
+            *)
+              echo "::error::Unknown runner-profile '${RUNNER_PROFILE}'. Expected one of: hosted-linux, puck-linux-arm64, puck-macos-arm64."
+              exit 1
+              ;;
+          esac
+
+          require_runner() {
+            expected_os="$1"
+            expected_arch="${2:-}"
+
+            if [ "$OBSERVED_RUNNER_OS" != "$expected_os" ]; then
+              echo "::error::runner-profile '${RUNNER_PROFILE}' requires runner.os '${expected_os}', got '${OBSERVED_RUNNER_OS}'."
+              exit 1
+            fi
+
+            if [ -n "$expected_arch" ] && [ "$OBSERVED_RUNNER_ARCH" != "$expected_arch" ]; then
+              echo "::error::runner-profile '${RUNNER_PROFILE}' requires runner.arch '${expected_arch}', got '${OBSERVED_RUNNER_ARCH}'."
+              exit 1
+            fi
+          }
+
+          case "$RUNNER_PROFILE" in
+            hosted-linux) require_runner Linux ;;
+            puck-linux-arm64) require_runner Linux ARM64 ;;
+            puck-macos-arm64) require_runner macOS ARM64 ;;
+          esac
+
+          for capability in $RUNNER_CAPABILITIES; do
+            case "$capability" in
+              gh|ruby|brew|make)
+                if ! command -v "$capability" >/dev/null 2>&1; then
+                  echo "::error::runner-capabilities requested '${capability}', but command '${capability}' was not found."
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make."
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Runner contract OK: profile='${RUNNER_PROFILE:-<none>}' capabilities='${RUNNER_CAPABILITIES:-<none>}' os='${OBSERVED_RUNNER_OS}' arch='${OBSERVED_RUNNER_ARCH}'."
+
       - uses: actions/checkout@v5
 
       - name: Validate YAML frontmatter in .md files
