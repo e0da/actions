@@ -41,11 +41,14 @@ entries through `env`.
 ### `ci-markdown.yml` — Markdown-heavy repos
 
 - **Link check**: lychee scans all `.md` files for broken external links. Linux
-  runners use `lycheeverse/lychee-action`; macOS self-hosted runners install or
-  use the Homebrew `lychee` package.
+  runners use `lycheeverse/lychee-action` by default. Callers with documented
+  self-hosted runner capability can set `tool-mode: runner-preinstalled` to
+  require `lychee` on PATH and run it directly. macOS self-hosted runners
+  install or use the Homebrew `lychee` package in the default mode.
 - **YAML frontmatter**: validates that any `---` frontmatter blocks are valid YAML
 
-Callers can override `runner` and the lychee argument string with `link-args`.
+Callers can override `runner`, request `runner-capabilities`, choose
+`tool-mode`, and set the lychee argument string with `link-args`.
 
 ### `ci-bats.yml` — Shell/Bats repos
 
