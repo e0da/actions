@@ -144,6 +144,12 @@ The allowlist file is intentionally simple and caller-owned:
 Rules:
 
 - tabs are the delimiter;
+- the matching key is `(workflow, job_or_pattern, runner)`;
+- `workflow` must match the reported workflow path exactly;
+- `runner` must match the reported hosted runner exactly, for example
+  `ubuntu-latest`;
+- `job_or_pattern` may be `*`, an exact job id, or a literal substring in the
+  reported source line;
 - blank lines and `#` comments are ignored;
 - `linear` is required and must name the issue that approves the fallback;
 - `expires` is required for hosted fallback in active SAMOS repos;
@@ -154,6 +160,25 @@ Rules:
 The first report-only implementation may parse and display allowlist entries
 without matching them perfectly to every finding. Blocking enforcement should
 wait until matching semantics are proven on at least two active callers.
+
+## M6-S2 Enforcement Semantics
+
+`mode: report` remains non-blocking. It reports hosted findings, approved hosted
+findings, unapproved hosted findings, Puck/self-hosted findings, unknown
+findings, and allowlist validity.
+
+`mode: enforce` is blocking only for policy states that are already precise:
+
+- invalid or expired allowlist rows fail;
+- unallowlisted hosted findings fail;
+- allowlisted hosted findings pass;
+- Puck/self-hosted findings pass;
+- unknown findings remain visible but non-blocking in this slice.
+
+This keeps enforcement useful without turning the lightweight source scanner
+into a full YAML evaluator. Unknown findings can become blocking in a later
+sprint only after fixtures and active caller proof show that false positives are
+under control.
 
 ## Why Not Block Immediately
 

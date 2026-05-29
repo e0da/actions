@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       mode:
-        description: "Policy mode. report emits findings and exits 0; enforce is reserved until M6 proof enables blocking."
+        description: "Policy mode. report emits findings and exits 0; enforce fails on unallowlisted hosted findings or invalid allowlist rows."
         required: false
         type: string
         default: report
@@ -68,20 +68,28 @@ jobs:
           workdir="$(mktemp -d "${temp_root}/hosted-drift-report.XXXXXX")"
 
           hosted="$workdir/hosted.tsv"
+          approved_hosted="$workdir/approved-hosted.tsv"
+          unapproved_hosted="$workdir/unapproved-hosted.tsv"
           puck="$workdir/puck.tsv"
           unknown="$workdir/unknown.tsv"
-          allowlist="$workdir/allowlist.tsv"
+          allowlist_valid="$workdir/allowlist-valid.tsv"
+          allowlist_invalid="$workdir/allowlist-invalid.tsv"
           : > "$hosted"
+          : > "$approved_hosted"
+          : > "$unapproved_hosted"
           : > "$puck"
           : > "$unknown"
-          : > "$allowlist"
+          : > "$allowlist_valid"
+          : > "$allowlist_invalid"
 
           emit() {
             bucket="$1"
             file="$2"
             line="$3"
-            reason="$4"
-            text="$5"
+            job="$4"
+            runner="$5"
+            reason="$6"
+            text="$7"
 
             case "$bucket" in
               hosted) target="$hosted" ;;
@@ -93,54 +101,113 @@ jobs:
                 ;;
             esac
 
-            printf '%s\t%s\t%s\t%s\n' "$file" "$line" "$reason" "$text" >> "$target"
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "$job" "$runner" "$reason" "$text" >> "$target"
+          }
+
+          extract_hosted_runner() {
+            text="$1"
+            for runner in ubuntu-latest macos-latest windows-latest; do
+              case "$text" in
+                *"$runner"*)
+                  printf '%s\n' "$runner"
+                  return
+                  ;;
+              esac
+            done
+            printf 'hosted\n'
           }
 
           scan_runs_on() {
             file="$1"
             awk '
+              function trim(value) {
+                sub(/^[[:space:]]+/, "", value)
+                sub(/[[:space:]]+$/, "", value)
+                return value
+              }
               /^[[:space:]]*runs-on:[[:space:]]*/ {
                 text=$0
+                runner="unknown"
                 if (text ~ /(ubuntu-latest|macos-latest|windows-latest)/) {
-                  print FNR "\thosted\tdirect hosted runs-on\t" text
+                  if (text ~ /ubuntu-latest/) runner="ubuntu-latest"
+                  else if (text ~ /macos-latest/) runner="macos-latest"
+                  else if (text ~ /windows-latest/) runner="windows-latest"
+                  print FNR "\t" job "\thosted\t" runner "\tdirect hosted runs-on\t" text
                 } else if (text ~ /(self-hosted|puck)/) {
-                  print FNR "\tpuck\tdirect Puck/self-hosted runs-on\t" text
+                  print FNR "\t" job "\tpuck\tself-hosted\tdirect Puck/self-hosted runs-on\t" text
                 } else if (text ~ /\$\{\{/) {
-                  print FNR "\tunknown\texpression runs-on\t" text
+                  print FNR "\t" job "\tunknown\texpression\texpression runs-on\t" text
                 }
+                next
               }
-            ' "$file" | while IFS="$(printf '\t')" read -r line bucket reason text; do
-              emit "$bucket" "$file" "$line" "$reason" "$text"
+              /^jobs:[[:space:]]*$/ {
+                in_jobs=1
+                job=""
+                next
+              }
+              in_jobs && /^[^[:space:]][^:]*:/ {
+                in_jobs=0
+                job=""
+              }
+              in_jobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ {
+                job=trim($0)
+                sub(/:$/, "", job)
+              }
+            ' "$file" | while IFS="$(printf '\t')" read -r line job bucket runner reason text; do
+              emit "$bucket" "$file" "$line" "$job" "$runner" "$reason" "$text"
             done
           }
 
           scan_reusable_calls() {
             file="$1"
-            awk '/uses:[[:space:]]*e0da\/actions\/\.github\/workflows\/[^[:space:]]+\.yml@/ { print FNR "\t" $0 }' "$file" |
-              while IFS="$(printf '\t')" read -r line text; do
+            awk '
+              function trim(value) {
+                sub(/^[[:space:]]+/, "", value)
+                sub(/[[:space:]]+$/, "", value)
+                return value
+              }
+              /^jobs:[[:space:]]*$/ {
+                in_jobs=1
+                job=""
+                next
+              }
+              in_jobs && /^[^[:space:]][^:]*:/ {
+                in_jobs=0
+                job=""
+              }
+              in_jobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ {
+                job=trim($0)
+                sub(/:$/, "", job)
+              }
+              /uses:[[:space:]]*e0da\/actions\/\.github\/workflows\/[^[:space:]]+\.yml@/ {
+                print FNR "\t" job "\t" $0
+              }
+            ' "$file" |
+              while IFS="$(printf '\t')" read -r line job text; do
                 workflow="$(printf '%s\n' "$text" | sed -n 's/.*e0da\/actions\/\.github\/workflows\/\([^@[:space:]]*\.yml\)@.*/\1/p')"
                 window="$(tail -n +"$line" "$file" | sed -n '1,30p')"
+                runner_input="$(printf '%s\n' "$window" | sed -n 's/^[[:space:]]*[a-zA-Z0-9_-]*runner:[[:space:]]*//p' | sed -n '1p')"
 
                 case "$workflow" in
                   deploy-compose.yml)
-                    emit puck "$file" "$line" "deploy-compose hard-routes to Puck" "$text"
+                    emit puck "$file" "$line" "$job" "self-hosted" "deploy-compose hard-routes to Puck" "$text"
                     continue
                     ;;
                 esac
 
-                if printf '%s\n' "$window" | grep -Eq '^[[:space:]]+[a-zA-Z0-9_-]*runner:[[:space:]]*(puck|.*self-hosted)'; then
-                  emit puck "$file" "$line" "reusable call passes Puck/self-hosted runner input" "$text"
-                elif printf '%s\n' "$window" | grep -Eq '^[[:space:]]+[a-zA-Z0-9_-]*runner:[[:space:]]*(ubuntu-latest|macos-latest|windows-latest)'; then
-                  emit hosted "$file" "$line" "reusable call passes hosted runner input" "$text"
-                elif printf '%s\n' "$window" | grep -Eq '^[[:space:]]+[a-zA-Z0-9_-]*runner:[[:space:]]*\$\{\{'; then
-                  emit unknown "$file" "$line" "reusable call uses expression runner input" "$text"
+                if [ -n "$runner_input" ] && printf '%s\n' "$runner_input" | grep -Eq '^(puck|.*self-hosted)'; then
+                  emit puck "$file" "$line" "$job" "$runner_input" "reusable call passes Puck/self-hosted runner input" "$text"
+                elif [ -n "$runner_input" ] && printf '%s\n' "$runner_input" | grep -Eq '^(ubuntu-latest|macos-latest|windows-latest)'; then
+                  emit hosted "$file" "$line" "$job" "$(extract_hosted_runner "$runner_input")" "reusable call passes hosted runner input" "$text"
+                elif [ -n "$runner_input" ] && printf '%s\n' "$runner_input" | grep -Eq '^\$\{\{'; then
+                  emit unknown "$file" "$line" "$job" "expression" "reusable call uses expression runner input" "$text"
                 else
                   case "$workflow" in
                     ci-*.yml|release-rust.yml)
-                      emit hosted "$file" "$line" "reusable call omits explicit runner override" "$text"
+                      emit hosted "$file" "$line" "$job" "ubuntu-latest" "reusable call omits explicit runner override" "$text"
                       ;;
                     *)
-                      emit unknown "$file" "$line" "unclassified e0da/actions reusable call" "$text"
+                      emit unknown "$file" "$line" "$job" "unknown" "unclassified e0da/actions reusable call" "$text"
                       ;;
                   esac
                 fi
@@ -148,17 +215,25 @@ jobs:
           }
 
           if [ -f "$ALLOWLIST_PATH" ]; then
-            awk '
+            awk -v today="$(date -u +%F)" '
               /^[[:space:]]*($|#)/ { next }
               {
                 fields=split($0, parts, "\t")
                 if (fields < 6) {
-                  print FNR "\tinvalid\t" $0
+                  print FNR "\ttoo few fields\t" $0
+                } else if (parts[4] !~ /^E0D-[0-9]+$/) {
+                  print FNR "\tinvalid Linear issue\t" $0
+                } else if (parts[5] !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) {
+                  print FNR "\tinvalid expiry date\t" $0
+                } else if (parts[5] < today) {
+                  print FNR "\texpired\t" $0
                 } else {
-                  print FNR "\tlisted\t" $0
+                  print FNR "\t" parts[1] "\t" parts[2] "\t" parts[3] "\t" parts[4] "\t" parts[5] "\t" parts[6]
                 }
               }
-            ' "$ALLOWLIST_PATH" > "$allowlist"
+            ' "$ALLOWLIST_PATH" > "$workdir/allowlist-raw.tsv"
+            awk -F '\t' 'NF == 7 { print }' "$workdir/allowlist-raw.tsv" > "$allowlist_valid"
+            awk -F '\t' 'NF != 7 { print }' "$workdir/allowlist-raw.tsv" > "$allowlist_invalid"
           fi
 
           if [ ! -d .github/workflows ]; then
@@ -171,11 +246,47 @@ jobs:
               done
           fi
 
+          is_allowlisted() {
+            finding_file="$1"
+            finding_job="$2"
+            finding_runner="$3"
+            finding_text="$4"
+
+            while IFS="$(printf '\t')" read -r _ allow_file allow_job allow_runner _ _ _; do
+              [ "$allow_file" = "$finding_file" ] || continue
+              [ "$allow_runner" = "$finding_runner" ] || continue
+
+              job_matches=0
+              if [ "$allow_job" = "*" ] || [ "$allow_job" = "$finding_job" ]; then
+                job_matches=1
+              else
+                case "$finding_text" in
+                  *"$allow_job"*) job_matches=1 ;;
+                esac
+              fi
+              [ "$job_matches" -eq 1 ] || continue
+
+              return 0
+            done < "$allowlist_valid"
+
+            return 1
+          }
+
+          while IFS="$(printf '\t')" read -r file line job runner reason text; do
+            if is_allowlisted "$file" "$job" "$runner" "$text"; then
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "$job" "$runner" "$reason" "$text" >> "$approved_hosted"
+            else
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "$job" "$runner" "$reason" "$text" >> "$unapproved_hosted"
+            fi
+          done < "$hosted"
+
           hosted_count="$(wc -l < "$hosted" | tr -d ' ')"
+          approved_hosted_count="$(wc -l < "$approved_hosted" | tr -d ' ')"
+          unapproved_hosted_count="$(wc -l < "$unapproved_hosted" | tr -d ' ')"
           puck_count="$(wc -l < "$puck" | tr -d ' ')"
           unknown_count="$(wc -l < "$unknown" | tr -d ' ')"
-          allowlist_count="$(grep -c '	listed	' "$allowlist" || true)"
-          invalid_allowlist_count="$(grep -c '	invalid	' "$allowlist" || true)"
+          allowlist_count="$(wc -l < "$allowlist_valid" | tr -d ' ')"
+          invalid_allowlist_count="$(wc -l < "$allowlist_invalid" | tr -d ' ')"
 
           {
             echo "# Hosted Runner Drift Report"
@@ -183,6 +294,8 @@ jobs:
             echo "| Bucket | Count |"
             echo "| --- | ---: |"
             echo "| Hosted findings | ${hosted_count} |"
+            echo "| Approved hosted findings | ${approved_hosted_count} |"
+            echo "| Unapproved hosted findings | ${unapproved_hosted_count} |"
             echo "| Puck/self-hosted findings | ${puck_count} |"
             echo "| Unknown findings | ${unknown_count} |"
             echo "| Allowlist entries | ${allowlist_count} |"
@@ -202,22 +315,33 @@ jobs:
                 echo
                 return
               fi
-              echo "| File | Line | Reason | Source |"
-              echo "| --- | ---: | --- | --- |"
-              while IFS="$(printf '\t')" read -r file line reason text; do
+              echo "| File | Line | Job | Runner | Reason | Source |"
+              echo "| --- | ---: | --- | --- | --- | --- |"
+              while IFS="$(printf '\t')" read -r file line job runner reason text; do
                 escaped_text="$(printf '%s' "$text" | sed 's/|/\\|/g')"
-                echo "| \`${file}\` | ${line} | ${reason} | \`${escaped_text}\` |"
+                echo "| \`${file}\` | ${line} | \`${job:-<unknown>}\` | \`${runner}\` | ${reason} | \`${escaped_text}\` |"
               done < "$path"
               echo
             }
-            print_table "Hosted Findings" "$hosted"
+            print_table "Unapproved Hosted Findings" "$unapproved_hosted"
+            print_table "Approved Hosted Findings" "$approved_hosted"
             print_table "Puck/Self-Hosted Findings" "$puck"
             print_table "Unknown Findings" "$unknown"
             echo "## Allowlist"
             echo
-            if [ -s "$allowlist" ]; then
+            if [ -s "$allowlist_valid" ]; then
               echo "\`\`\`text"
-              cat "$allowlist"
+              cat "$allowlist_valid"
+              echo "\`\`\`"
+            else
+              echo "None."
+            fi
+            echo
+            echo "## Invalid Allowlist Entries"
+            echo
+            if [ -s "$allowlist_invalid" ]; then
+              echo "\`\`\`text"
+              cat "$allowlist_invalid"
               echo "\`\`\`"
             else
               echo "None."
@@ -232,15 +356,21 @@ jobs:
             echo "::warning::Invalid allowlist entries were found in ${ALLOWLIST_PATH}."
           fi
 
-          if [ "$hosted_count" -gt 0 ]; then
-            echo "::notice::Hosted runner findings were reported. M6-S1 report mode does not block."
+          if [ "$unapproved_hosted_count" -gt 0 ]; then
+            echo "::notice::Unapproved hosted runner findings were reported."
           fi
 
           if [ "$unknown_count" -gt 0 ]; then
-            echo "::notice::Unknown runner findings were reported. Review before enabling blocking enforcement."
+            echo "::notice::Unknown runner findings were reported. They are visible but non-blocking in this slice."
           fi
 
           if [ "$MODE" = enforce ]; then
-            echo "::error::mode=enforce is reserved until M6 report-only proof enables blocking enforcement."
-            exit 1
+            if [ "$invalid_allowlist_count" -gt 0 ]; then
+              echo "::error::mode=enforce failed because invalid allowlist entries were found."
+              exit 1
+            fi
+            if [ "$unapproved_hosted_count" -gt 0 ]; then
+              echo "::error::mode=enforce failed because unapproved hosted runner findings were found."
+              exit 1
+            fi
           fi
