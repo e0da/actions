@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actions-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflow-lint:
+    name: Workflow Lint
+    runs-on: [self-hosted, puck-linux-arm64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install actionlint
+        shell: sh
+        run: |
+          set -eu
+          tools_dir="$RUNNER_TEMP/actions-self-ci/bin"
+          mkdir -p "$tools_dir"
+
+          curl -fsSL \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_arm64.tar.gz \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$tools_dir" actionlint
+
+      - name: Validate workflows
+        shell: sh
+        run: |
+          set -eu
+          PATH="$RUNNER_TEMP/actions-self-ci/bin:$PATH"
+          actionlint -config-file .github/actionlint.yaml
+
+  script-fixtures:
+    name: Script Fixtures
+    runs-on: [self-hosted, puck-linux-arm64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install shell test tools
+        shell: sh
+        run: |
+          set -eu
+          tools_dir="$RUNNER_TEMP/actions-self-ci/bin"
+          mkdir -p "$tools_dir"
+
+          curl -fsSL \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.aarch64.tar.gz \
+            -o "$RUNNER_TEMP/shellcheck.tar.gz"
+          tar -xzf "$RUNNER_TEMP/shellcheck.tar.gz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/shellcheck-v0.11.0/shellcheck" "$tools_dir/shellcheck"
+
+          curl -fsSL \
+            https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-arm64 \
+            -o "$tools_dir/jq"
+          chmod +x "$tools_dir/jq"
+
+      - name: Validate shell scripts
+        shell: sh
+        run: |
+          set -eu
+          PATH="$RUNNER_TEMP/actions-self-ci/bin:$PATH"
+          shellcheck tests/*.sh
+          sh tests/hosted_drift_report.sh
+          sh tests/runner_manifest_validation.sh

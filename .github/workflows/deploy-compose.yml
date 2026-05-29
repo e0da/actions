@@ -112,7 +112,9 @@ jobs:
             echo "stack-path does not exist on runner: $stack_path" >&2
             exit 1
           fi
-          repo_root="$(cd "$stack_path" && git rev-parse --show-toplevel 2>/dev/null || true)"
+          if ! repo_root="$(cd "$stack_path" && git rev-parse --show-toplevel 2>/dev/null)"; then
+            repo_root=""
+          fi
           if [[ -z "$repo_root" ]]; then
             echo "warning: $stack_path is not inside a git repo; skipping refresh" >&2
             exit 0
