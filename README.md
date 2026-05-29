@@ -48,7 +48,8 @@ entries through `env`.
 - **YAML frontmatter**: validates that any `---` frontmatter blocks are valid YAML
 
 Callers can override `runner`, request `runner-capabilities`, choose
-`tool-mode`, and set the lychee argument string with `link-args`.
+`tool-mode`, provide an optional `runner-manifest` contract JSON snippet, and
+set the lychee argument string with `link-args`.
 
 ### `ci-bats.yml` — Shell/Bats repos
 
@@ -86,7 +87,8 @@ Runs `opentofu/setup-opentofu`, then:
 - validation, default `make validate`
 
 Callers can override `fmt-command`, `validate-command`, `tofu-version`, and
-`runner`.
+`runner`. They can also provide an optional `runner-manifest` contract JSON
+snippet to validate requested capabilities before setup runs.
 
 ### `ci-rust.yml` — Rust repos
 
