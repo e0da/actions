@@ -40,6 +40,14 @@ jobs:
     name: Broken Link Check
     runs-on: ${{ inputs.runner }}
     steps:
+      - name: Add runner-local tools to PATH
+        run: |
+          set -eu
+
+          if [ -d "$HOME/.local/bin" ]; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
       - name: Validate runner contract
         env:
           RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
@@ -158,6 +166,14 @@ jobs:
     name: YAML Frontmatter Validation
     runs-on: ${{ inputs.runner }}
     steps:
+      - name: Add runner-local tools to PATH
+        run: |
+          set -eu
+
+          if [ -d "$HOME/.local/bin" ]; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
       - name: Validate runner contract
         env:
           RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
