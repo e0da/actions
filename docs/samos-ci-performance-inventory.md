@@ -14,6 +14,12 @@ Per E0D-1005, GitHub's official changelog says the Node 24 default begins on
 2026-06-16. That follow-up now upgrades or replaces Node-backed marketplace
 actions while preserving hosted runner defaults.
 
+Related follow-up: artifact and cache policy classification is tracked in
+[E0D-1009](https://linear.app/e0da/issue/E0D-1009/actions-classify-workflow-artifact-and-cache-policy).
+That follow-up is documentation-only: classify deploy inputs, release
+artifacts, diagnostic artifacts, accidental or noisy outputs, cache consumers,
+retention defaults, and possible shared knobs before changing behavior.
+
 ## Method
 
 Evidence is limited to local repo files read during this inventory. Citations use
@@ -212,6 +218,83 @@ adopted by active repos later.
 | `ci-elixir.yml` | `runner`, default `ubuntu-latest`; job uses it. Evidence: `.github/workflows/ci-elixir.yml:6`, `.github/workflows/ci-elixir.yml:10`, `.github/workflows/ci-elixir.yml:35`. | Runs `erlef/setup-beam`, caches `deps` and `_build`, then runs configurable deps and CI commands. Evidence: `.github/workflows/ci-elixir.yml:43`, `.github/workflows/ci-elixir.yml:49`, `.github/workflows/ci-elixir.yml:52`, `.github/workflows/ci-elixir.yml:60`, `.github/workflows/ci-elixir.yml:63`. | Cache key varies by `runner.os`, OTP, Elixir, and `mix.lock`. Evidence: `.github/workflows/ci-elixir.yml:55`. |
 | `ci-rust.yml` | `runner`, default `ubuntu-latest`; job uses it. Evidence: `.github/workflows/ci-rust.yml:43`, `.github/workflows/ci-rust.yml:46`, `.github/workflows/ci-rust.yml:83`. | Optional apt system deps, optional pinned SOPS, optional pinned NATS server, optional Docker NATS, Rust toolchain install, Rust cache, nextest install; no artifacts. Evidence: `.github/workflows/ci-rust.yml:98`, `.github/workflows/ci-rust.yml:104`, `.github/workflows/ci-rust.yml:135`, `.github/workflows/ci-rust.yml:168`, `.github/workflows/ci-rust.yml:183`, `.github/workflows/ci-rust.yml:190`, `.github/workflows/ci-rust.yml:195`. | SOPS and NATS installers support only `X64` and `ARM64` Linux runner architectures; Docker is required when `start-nats-jetstream` is true. Evidence: `.github/workflows/ci-rust.yml:115`, `.github/workflows/ci-rust.yml:120`, `.github/workflows/ci-rust.yml:124`, `.github/workflows/ci-rust.yml:146`, `.github/workflows/ci-rust.yml:151`, `.github/workflows/ci-rust.yml:155`, `.github/workflows/ci-rust.yml:172`. |
 | `release-rust.yml` | Separate runner inputs: `validate-runner`, `linux-x64-runner`, `linux-arm64-runner`, `publish-runner`, `image-runner`. Hosted defaults remain `ubuntu-latest` except `linux-arm64-runner`, which defaults to `puck-linux-arm64`. Evidence: `.github/workflows/release-rust.yml:13`, `.github/workflows/release-rust.yml:16`, `.github/workflows/release-rust.yml:17`, `.github/workflows/release-rust.yml:20`, `.github/workflows/release-rust.yml:21`, `.github/workflows/release-rust.yml:24`, `.github/workflows/release-rust.yml:25`, `.github/workflows/release-rust.yml:28`, `.github/workflows/release-rust.yml:29`, `.github/workflows/release-rust.yml:32`. | Validates tag, installs Rust and musl tools, restores Rust cache, uploads binary artifacts, downloads all artifacts for release, optionally builds and pushes a container image. Evidence: `.github/workflows/release-rust.yml:61`, `.github/workflows/release-rust.yml:136`, `.github/workflows/release-rust.yml:144`, `.github/workflows/release-rust.yml:164`, `.github/workflows/release-rust.yml:194`, `.github/workflows/release-rust.yml:212`, `.github/workflows/release-rust.yml:247`, `.github/workflows/release-rust.yml:250`. | Matrix includes macOS ARM64 self-hosted, Linux ARM64 musl, and Linux x64 musl. Unrequested targets are skipped before toolchain/cache/build work. Evidence: `.github/workflows/release-rust.yml:107`, `.github/workflows/release-rust.yml:108`, `.github/workflows/release-rust.yml:109`, `.github/workflows/release-rust.yml:110`, `.github/workflows/release-rust.yml:111`, `.github/workflows/release-rust.yml:126`, `.github/workflows/release-rust.yml:136`, `.github/workflows/release-rust.yml:164`, `.github/workflows/release-rust.yml:170`. |
+
+## E0D-1009 Storage Policy Classification
+
+This section classifies current artifact and cache behavior only. It is a policy
+inventory for later retention or knob work; it does not change workflow
+behavior.
+
+### Artifact Classes By Workflow
+
+| Workflow | Current artifact behavior | Classification | Retention default | Policy notes |
+| --- | --- | --- | --- | --- |
+| `ci-baseline.yml` | No Actions artifact upload or download. Secret-scan output is console log only. Evidence: `.github/workflows/ci-baseline.yml:54`, `.github/workflows/ci-baseline.yml:106`. | Diagnostic logs only; no durable artifact. | Keep platform log retention; no artifact retention knob needed. | Do not introduce artifact upload for the redacted advisory secret scan unless a caller needs a durable diagnostic bundle. |
+| `ci-markdown.yml` | No Actions artifact upload or download. Link and YAML failures are logs only. Evidence: `.github/workflows/ci-markdown.yml:30`, `.github/workflows/ci-markdown.yml:72`. | Diagnostic logs only; no durable artifact. | Keep platform log retention; no artifact retention knob needed. | Lychee output is useful for failure triage but is not a deploy or release input. |
+| `ci-jekyll.yml` | Builds the site but does not upload `_site` or any bundle output. Evidence: `.github/workflows/ci-jekyll.yml:110`, `.github/workflows/ci-jekyll.yml:115`. | Diagnostic/build validation only. | Keep no-upload default. | This is intentionally distinct from `wiki` deploy's upstream `wiki-site` artifact; adding uploads here would change the workflow from validation to build-output production. |
+| `ci-opentofu.yml` | No artifact upload or download. Evidence: `.github/workflows/ci-opentofu.yml:42`, `.github/workflows/ci-opentofu.yml:47`. | Diagnostic logs only; no durable artifact. | Keep no-upload default. | Plans are not generated or preserved today, so there is no deploy input to retain. |
+| `deploy-compose.yml` | Archetype A downloads a caller-produced artifact into `_artifact` and rsyncs it into a Puck bind target. Evidence: `.github/workflows/deploy-compose.yml:34`, `.github/workflows/deploy-compose.yml:125`, `.github/workflows/deploy-compose.yml:168`. | Deploy input. | Preserve current download requirement for archetype A; retention belongs to the producing workflow, not this deploy workflow. | Puck tradeoff: the deploy consumes an Actions artifact because static-bind deployment does not rebuild on Puck. B/C/D use the long-lived stack checkout, GHCR images, local Docker build, or upstream images instead. |
+| `deploy-compose.yml` | Job summary writes service, stack path, apply flag, and `skip-pull`. Evidence: `.github/workflows/deploy-compose.yml:283`, `.github/workflows/deploy-compose.yml:287`. | Diagnostic/noisy output. | Keep platform step-summary behavior; do not persist separately. | Useful for operator inspection, but not a release or deploy input. |
+| `ci-bats.yml` | No artifact upload or download. Evidence: `.github/workflows/ci-bats.yml:31`, `.github/workflows/ci-bats.yml:36`. | Diagnostic logs only; no durable artifact. | Keep no-upload default. | Test output should remain in logs unless a caller later needs junit or coverage retention. |
+| `ci-typescript-bun.yml` | No artifact upload or download. Build/test results are logs only. Evidence: `.github/workflows/ci-typescript-bun.yml:95`, `.github/workflows/ci-typescript-bun.yml:129`. | Diagnostic/build validation only. | Keep no-upload default. | `bun run build` may create local build output, but the reusable does not publish it. |
+| `ci-elixir.yml` | No artifact upload or download. Evidence: `.github/workflows/ci-elixir.yml:60`, `.github/workflows/ci-elixir.yml:63`. | Diagnostic logs only; no durable artifact. | Keep no-upload default. | `_build` is cache state, not a release or deploy artifact. |
+| `ci-rust.yml` | No artifact upload or download. Cargo build output remains local to the job. Evidence: `.github/workflows/ci-rust.yml:210`, `.github/workflows/ci-rust.yml:216`. | Diagnostic/build validation only. | Keep no-upload default. | `target/` is cache/build state, not retained artifact state in CI. |
+| `release-rust.yml` | Build jobs upload per-target tarballs plus sha256 files; publish downloads `binary-*` and attaches them to a GitHub Release. Evidence: `.github/workflows/release-rust.yml:178`, `.github/workflows/release-rust.yml:194`, `.github/workflows/release-rust.yml:212`, `.github/workflows/release-rust.yml:218`. | Release artifacts. | Retain long enough for same-run publish and rerun/debug windows; durable retention is the GitHub Release asset after publish. Candidate default: 14 days for transient build artifacts, shorter only after rerun needs are measured. | Do not skip upload/download when publishing a release. An `artifact-mode` could later distinguish `release`, `transient-only`, and `off`, but `release` must remain the default. |
+| `puck-linux-arm64-smoke.yml` | No artifact upload or download. Docker checks are logs only. Evidence: `.github/workflows/puck-linux-arm64-smoke.yml:16`, `.github/workflows/puck-linux-arm64-smoke.yml:22`, `.github/workflows/puck-linux-arm64-smoke.yml:25`. | Diagnostic logs only; no durable artifact. | Keep platform log retention; no artifact retention knob needed. | Puck runner proof should stay cheap and not produce retained storage unless troubleshooting requires a temporary bundle. |
+
+No current workflow uploads accidental Actions artifacts. The only noisy retained
+surface is the platform's normal log and step-summary retention. The accidental
+output risk is future creep: validation workflows may start uploading local
+build directories (`_site`, `target/`, `_build`, `dist/`) that look useful but
+are neither release artifacts nor deploy inputs. Treat those as opt-in,
+caller-specific diagnostics, not shared defaults.
+
+### Cache Consumers By Tool And Runner Substrate
+
+| Workflow | Package manager or tool | Current cache consumer | Runner substrate | Policy notes |
+| --- | --- | --- | --- | --- |
+| `ci-jekyll.yml` | Bundler/RubyGems | Non-macOS uses `ruby/setup-ruby` `bundler-cache: true`. Evidence: `.github/workflows/ci-jekyll.yml:38`, `.github/workflows/ci-jekyll.yml:43`. macOS self-hosted uses `$RUNNER_TEMP/bundle` with no persisted Actions cache. Evidence: `.github/workflows/ci-jekyll.yml:45`, `.github/workflows/ci-jekyll.yml:73`. | Hosted/default `ubuntu-latest` and any non-macOS runner use setup-action cache behavior; Puck macOS uses ephemeral runner-temp bundler install. | Preserve hosted fallback. A future `cache-mode` should avoid assuming the macOS Puck runner benefits from GitHub cache restore/save. |
+| `ci-elixir.yml` | Mix/Rebar/BEAM | `actions/cache@v5` persists `deps` and `_build` keyed by runner OS, OTP, Elixir, and `mix.lock`. Evidence: `.github/workflows/ci-elixir.yml:49`, `.github/workflows/ci-elixir.yml:52`, `.github/workflows/ci-elixir.yml:55`. | Default hosted Linux unless caller overrides `runner`; active SAMOS Mix jobs are currently local to repos rather than this reusable. | Cache is coupled to setup-beam versions and runner OS, but not architecture. Add architecture only if shared callers run the same OS on mixed X64/ARM64 substrates and measurements show cache collisions or misses. |
+| `ci-rust.yml` | Cargo/rustup/nextest | `Swatinem/rust-cache@v2` keyed with `shared-key: <toolchain>-<runner.os>`. Evidence: `.github/workflows/ci-rust.yml:183`, `.github/workflows/ci-rust.yml:190`, `.github/workflows/ci-rust.yml:193`. | Default hosted Linux unless caller overrides `runner`; optional Docker NATS requires Docker on the runner. Evidence: `.github/workflows/ci-rust.yml:168`, `.github/workflows/ci-rust.yml:173`. | Puck Linux ARM64 may have stable local toolchain/cache state, but hosted fallback still needs restore/save. Consider architecture-aware cache keys before broad ARM64 adoption. |
+| `release-rust.yml` | Cargo/rustup | `Swatinem/rust-cache@v2` keyed with `shared-key: stable-<runner.os>-<target>`. Evidence: `.github/workflows/release-rust.yml:136`, `.github/workflows/release-rust.yml:164`, `.github/workflows/release-rust.yml:168`. | Mixed: hosted defaults for validate, Linux x64, publish, and image; `puck-linux-arm64` default for Linux ARM64; self-hosted macOS ARM64 matrix target. Evidence: `.github/workflows/release-rust.yml:13`, `.github/workflows/release-rust.yml:21`, `.github/workflows/release-rust.yml:107`, `.github/workflows/release-rust.yml:109`. | Release builds should prefer correctness over cache economy. Cache bypass on Puck should be opt-in and must preserve unrequested-target skip-before-cache behavior. |
+| `ci-typescript-bun.yml` | Bun | No persisted Actions cache; always runs `oven-sh/setup-bun` and `bun install --frozen-lockfile`. Evidence: `.github/workflows/ci-typescript-bun.yml:54`, `.github/workflows/ci-typescript-bun.yml:58`. | Default hosted Linux unless caller overrides `runner`; ripgrep install assumes apt if missing. Evidence: `.github/workflows/ci-typescript-bun.yml:61`, `.github/workflows/ci-typescript-bun.yml:64`. | A future cache policy could cover Bun's install cache, but it would be new behavior and should not be folded into generic artifact retention work. |
+| `ci-bats.yml` | apt packages | No persisted Actions cache; installs apt packages each run. Evidence: `.github/workflows/ci-bats.yml:31`, `.github/workflows/ci-bats.yml:33`. | Default hosted apt-based Linux unless caller overrides to a compatible self-hosted Linux. | Treat apt package reuse as runner-image/tool-mode work, not Actions cache work. |
+| `ci-markdown.yml` | Lychee/Ruby stdlib | No persisted Actions cache; Linux uses `lycheeverse/lychee-action`, macOS installs Homebrew `lychee` if missing. Evidence: `.github/workflows/ci-markdown.yml:30`, `.github/workflows/ci-markdown.yml:39`, `.github/workflows/ci-markdown.yml:51`. | Hosted/default Linux or Puck macOS depending on caller. | Puck macOS can benefit from preinstalled Homebrew packages; hosted fallback must continue using the action path. |
+| `ci-opentofu.yml` | OpenTofu | No persisted Actions cache; always runs `opentofu/setup-opentofu@v2`. Evidence: `.github/workflows/ci-opentofu.yml:36`, `.github/workflows/ci-opentofu.yml:37`. | Hosted/default Linux or caller-provided Puck Linux. | Provider/plugin cache policy is absent today; adding it would be behavior change and should be measured separately. |
+| `deploy-compose.yml` | Docker/Git/SOPS | No Actions cache. Uses a long-lived Puck stack checkout, Docker image pulls/builds, ephemeral Docker config, and Puck-local SOPS age key. Evidence: `.github/workflows/deploy-compose.yml:98`, `.github/workflows/deploy-compose.yml:121`, `.github/workflows/deploy-compose.yml:132`, `.github/workflows/deploy-compose.yml:179`, `.github/workflows/deploy-compose.yml:213`, `.github/workflows/deploy-compose.yml:230`. | Puck-only self-hosted deploy. Evidence: `.github/workflows/deploy-compose.yml:70`, `.github/workflows/deploy-compose.yml:73`. | Git checkout and Docker layer/image reuse are host-local state, not GitHub Actions cache. Performance knobs here should be deploy-specific (`refresh-mode`, `pull-mode`, or `clean-mode`) rather than `cache-mode`. |
+
+### Recommended Retention And Knob Defaults
+
+- `artifact-mode`: default `auto`. In `auto`, release workflows upload and
+  download release artifacts, deploy archetype A downloads required deploy
+  inputs, and validation workflows upload nothing. Future explicit values could
+  be `release`, `deploy-input`, `diagnostic`, and `off`; `off` must be rejected
+  or ignored when it would remove a required release artifact or archetype A
+  deploy input.
+- `artifact-retention-days`: default unset for validation workflows and 14 days
+  for transient release build artifacts if the upload action is later given an
+  explicit retention. Deploy-input retention should be configured on the
+  producing workflow, not `deploy-compose.yml`, because deploy only downloads.
+- `diagnostic-artifact-mode`: default `logs-only`. Use this instead of widening
+  `artifact-mode` when a caller wants junit, coverage, link-check reports, or
+  other troubleshooting bundles.
+- `cache-mode`: default `auto`. In `auto`, preserve current hosted-compatible
+  cache behavior: Bundler cache on non-macOS Jekyll, Mix cache in Elixir, and
+  Rust cache in CI/release. Candidate explicit values: `auto`, `force`,
+  `skip`, and `read-only` if the underlying action supports it. `skip` should
+  be opt-in for Puck only after measurements show remote cache restore/save is
+  worse than runner-local state.
+- `cache-key-scope`: default current keys. Candidate future values:
+  `os`, `os-arch`, and `runner-profile`. Do not add architecture to every key
+  until mixed X64/ARM64 use on the same workflow proves it is needed.
+- Hosted fallback policy: all knobs must preserve existing hosted defaults.
+  A caller that does not set cache or artifact policy should see today's
+  behavior on `ubuntu-latest`.
+- Puck tradeoff policy: Puck runners may benefit from preinstalled tools,
+  persistent local package state, Docker image/layer reuse, and long-lived
+  checkouts, but those are host-local contracts. Treat them as opt-in
+  self-hosted policy choices and keep Puck-specific deploy assumptions out of
+  hosted reusable CI defaults.
 
 ## Candidate Knobs
 
