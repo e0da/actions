@@ -22,9 +22,12 @@ retention defaults, and possible shared knobs before changing behavior.
 
 ## Method
 
-Evidence is limited to local repo files read during this inventory. Citations use
-paths relative to `/Users/bug/src/actions` when the file is in this repo and
-`../<repo>/...` when the evidence is in another active SAMOS repo.
+Evidence is limited to local repo files read during this inventory, except for
+explicitly named read-only live Puck runner probes used for M1-S2 tool
+availability decisions. Citations use paths relative to `/Users/bug/src/actions`
+when the file is in this repo and `../<repo>/...` when the evidence is in
+another active SAMOS repo. Live runner probes must name the checked containers
+and command shape.
 
 ## E0D-1005 Node 24 Marketplace Action Decision
 
@@ -330,6 +333,8 @@ Evidence:
 
 - Markdown uses a hosted action on Linux and Homebrew on macOS. Evidence:
   `.github/workflows/ci-markdown.yml:31`, `.github/workflows/ci-markdown.yml:39`.
+- Baseline secret scanning installs a pinned Gitleaks release instead of relying
+  on a runner-local binary. Evidence: `.github/workflows/ci-baseline.yml:186`.
 - Jekyll uses `ruby/setup-ruby` off macOS and Homebrew Ruby on macOS. Evidence:
   `.github/workflows/ci-jekyll.yml:38`, `.github/workflows/ci-jekyll.yml:45`.
 - OpenTofu always uses `opentofu/setup-opentofu@v2`. Evidence:
@@ -343,6 +348,28 @@ Evidence:
 Compatibility policy: default `tool-mode` should preserve the current hosted
 setup behavior. Self-hosted lanes can opt into preinstalled tools only where the
 runner capability is documented.
+
+M1-S2 result: implement and prove the Markdown `runner-preinstalled` path first;
+do not expand tool-mode to Gitleaks or OpenTofu until runner capabilities are
+explicitly standardized. Read-only live Puck evidence for the checked Stack/Ops
+Linux runner containers:
+
+| Runner container | `lychee` | `gitleaks` | `tofu` |
+| --- | --- | --- | --- |
+| `actions-runner-linux-stack` | `/runner/.local/bin/lychee` | missing | missing |
+| `actions-runner-linux-ops` | missing | missing | missing |
+
+Deferred gates:
+
+- Gitleaks can be reconsidered only after either a preinstalled `gitleaks`
+  binary has a version/hash contract, or M2 defines a runner-image contract that
+  owns the Gitleaks binary lifecycle.
+- OpenTofu can be reconsidered only after either a preinstalled `tofu` binary
+  has a version and plugin-cache contract, or M2 defines a runner-image contract
+  that owns the OpenTofu binary and provider/plugin cache lifecycle.
+- Until one of those gates exists, M1 keeps the optimization order as Markdown
+  proof first, then decides whether to continue targeted `tool-mode` rollout or
+  move broader tool availability to M2 runner-image work.
 
 ### `cache-mode`
 
@@ -446,7 +473,7 @@ without prematurely changing workflow behavior.
 | # | Hypothesis | Evidence | Citation | Conclusion | Confidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `runner-profile` should be additive over raw runner inputs. | CI workflows already expose raw `runner` defaults, while active repos override to Puck labels. | `.github/workflows/ci-baseline.yml:10`; `../ops/.github/workflows/ci.yml:21`; `../wiki/.github/workflows/ci.yml:21` | Supports. Raw runner labels are the current compatibility contract. | HIGH, 90% |
-| 2 | `tool-mode` is a first-order M1 knob because setup work dominates Markdown, Jekyll, OpenTofu, Rust, and TypeScript paths. | Workflows repeatedly install tools through setup actions, apt, Homebrew, or Rust-specific installers. | `.github/workflows/ci-markdown.yml:32`; `.github/workflows/ci-jekyll.yml:63`; `.github/workflows/ci-opentofu.yml:37`; `.github/workflows/ci-rust.yml:183` | Supports. This is broad and visible in active wiki/ops paths. | HIGH, 85% |
+| 2 | `tool-mode` is a first-order M1 knob where setup work dominates, but only after runner capability evidence exists. | Workflows repeatedly install tools through setup actions, apt, Homebrew, or Rust-specific installers. M1-S2 proved the Markdown path, while checked Stack/Ops Puck Linux runner containers do not expose `gitleaks` or `tofu` on PATH. | `.github/workflows/ci-markdown.yml:32`; `.github/workflows/ci-jekyll.yml:63`; `.github/workflows/ci-opentofu.yml:37`; `.github/workflows/ci-rust.yml:183` | Supports targeted rollout. Does not support broad Gitleaks/OpenTofu tool-mode work before M2 runner-image/toolchain contracts. | HIGH, 85% |
 | 3 | `cache-mode` should be deferred until a measured cache baseline exists. | Active SAMOS reusable calls mostly use no cache; cache-heavy shared workflows are mostly not active call targets today. | `../wiki/.github/workflows/ci.yml:36`; `.github/workflows/ci-elixir.yml:49`; `.github/workflows/ci-rust.yml:190` | Partially supports. Useful, but not the first M1 optimization unless cache timings prove otherwise. | MED, 70% |
 | 4 | `artifact-mode` is deploy/release-specific, not a general CI knob. | Active artifact use is wiki deploy archetype A; release artifacts exist in `release-rust.yml`, not current active calls. | `../wiki/.github/workflows/deploy.yml:47`; `.github/workflows/release-rust.yml:194`; `.github/workflows/release-rust.yml:212` | Supports. Keep scoped to release/static-bind paths. | HIGH, 80% |
 | 5 | `clean-mode` must preserve safety cleanup even if performance tuning skips expensive refreshes. | Deploy cleanup removes secrets and credentials; the same workflow also does expensive checkout reset and `rsync --delete`. | `.github/workflows/deploy-compose.yml:122`; `.github/workflows/deploy-compose.yml:260`; `.github/workflows/deploy-compose.yml:276`; `.github/workflows/deploy-compose.yml:176` | Supports. Cleanup has safety and performance parts that should not share one blunt toggle. | HIGH, 85% |
@@ -457,7 +484,7 @@ without prematurely changing workflow behavior.
 | --- | --- | --- | --- | --- | --- |
 | A | Add documentation-only inventory now; implement no knobs in E0D-1002. | Matches the ticket's inventory requirement and preserves existing compatibility contracts. | Does not reduce CI time by itself. | HIGH, 95% | If E0D-1002 explicitly required implementation in Linear comments not visible in repo files. |
 | B | First implementation slice after this: additive `runner-profile` plus `runner-capabilities` validation for active CI workflows. | Keeps raw hosted defaults while giving Puck lanes a stable policy vocabulary. | Needs clear capability names to avoid duplicating raw labels under a new name. | HIGH, 85% | If measured timings show setup actions, not runner routing, dominate M1 everywhere. |
-| C | Second implementation slice: `tool-mode` for Markdown, Jekyll, and OpenTofu, defaulting to current hosted setup. | Targets active SAMOS setup overhead without changing behavior for default callers. | Requires careful hosted fallback and self-hosted capability checks. | MED, 75% | If Puck images are not standardized enough to rely on preinstalled tools. |
+| C | Second implementation slice: `tool-mode` for Markdown first, defaulting to current hosted setup. Defer Gitleaks and OpenTofu until preinstalled-tool or runner-image contracts exist. | Targets active SAMOS setup overhead without changing behavior for default callers, while matching M1-S2 evidence. | Requires careful hosted fallback and self-hosted capability checks; checked Stack/Ops Puck Linux runner containers lack `gitleaks` and `tofu`. | MED, 75% | If Puck images are standardized enough to rely on preinstalled Gitleaks/OpenTofu with version/cache contracts. |
 
 KILP read: this is a policy/contract change surface, so implementation should be
 reviewed in small PRs after this inventory. This artifact records the evidence
@@ -474,10 +501,11 @@ silently.
    `gh` for baseline, Homebrew for macOS Markdown/Jekyll, Docker/Compose for
    deploy, and architecture checks for Rust installers. This makes tool-mode
    decisions explicit instead of relying on accidental runner contents.
-3. Add `tool-mode` to Markdown, Jekyll, and OpenTofu with default
-   `workflow-install`; let Puck callers opt into `runner-preinstalled` only
-   after runner capabilities are documented. This targets repeated
-   Homebrew/setup action overhead in the active `wiki` and `ops` lanes.
+3. Add `tool-mode` to Markdown first with default `workflow-install`; let Puck
+   callers opt into `runner-preinstalled` only after runner capabilities are
+   documented. Defer Gitleaks and OpenTofu until `gitleaks` and `tofu` have
+   preinstalled-tool contracts or M2 runner-image contracts. This preserves the
+   Markdown proof-first M1 order without relying on accidental runner contents.
 4. Split `clean-mode` for `deploy-compose` into safety cleanup that always
    remains on and expensive refresh behavior that can be policy-controlled.
    Preserve decrypted env and Docker credential cleanup regardless of mode.
