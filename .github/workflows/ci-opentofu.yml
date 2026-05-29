@@ -8,6 +8,16 @@ on:
         required: false
         type: string
         default: ubuntu-latest
+      runner-profile:
+        description: "Optional runner profile metadata for future validation; does not affect scheduling."
+        required: false
+        type: string
+        default: ""
+      runner-capabilities:
+        description: "Optional requested runner capability metadata for future validation."
+        required: false
+        type: string
+        default: ""
       tofu-version:
         description: "OpenTofu version passed to opentofu/setup-opentofu."
         required: false
