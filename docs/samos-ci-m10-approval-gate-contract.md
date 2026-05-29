@@ -1,71 +1,61 @@
-# SAMOS CI M10 Approval Gate Contract
+# SAMOS CI M10 Approval Report Contract
 
-**Linear:** E0D-1120
+**Linear:** E0D-1120, E0D-1123, E0D-1129
 
-**Status:** design contract; no workflow implementation in this slice.
+**Status:** superseded on 2026-05-29. The reusable workflow remains available as
+an advisory approval report, not as a CI merge gate.
 
 ## Purpose
 
-The approval gate is an opt-in CI governance check for repositories that want
-merge readiness to include an explicit approval provenance signal.
+The approval report observes live GitHub approval signals without turning
+approval state into CI health. It exists to keep reviewer and merge-authority
+context visible while avoiding the chicken-and-egg where CI is red until an
+approval label exists, and reviewers cannot treat CI as green until CI passes.
 
-It exists because same-account agents cannot reliably use GitHub's normal
-approval review mechanism: GitHub does not let an account approve its own pull
-request, and using separate puppet accounts or switching git identities is
-operationally riskier than the current E0DA workflow should accept.
+## Value Thread
 
-The gate gives opted-in repositories two valid approval paths:
+As an Agency technical lead, I can read GitHub Actions as build/test health and
+read `approved[...]` labels as merge-authority intent so that review, approval,
+and Graphite merge decisions stay separate.
 
-1. a real GitHub pull request review with state `APPROVED`; or
-2. a real GitHub pull request label matching an allowed `approved[...]` label.
+This supports Puck CI Performance Optimization by preventing policy-only
+failures from polluting runner-capacity evidence. It also supports trustworthy
+autonomous delivery by keeping approval discipline in the Agency review loop.
 
-Timeline comments, review comments, PR body text, commit messages, branch names,
-and check output do not satisfy the label path. A comment containing
-`approved[agency]` is still only a comment.
+## Contract
 
-## Scope
+The workflow reports these live PR signals:
 
-In scope:
-
-- reusable workflow contract in `e0da/actions`;
-- caller-side opt-in from current living repositories only;
-- aggregate-readable approval provenance through real GitHub labels;
-- compatibility with normal GitHub code review when a real `APPROVED` review is
-  present.
-
-Out of scope:
-
-- global default enablement;
-- puppet GitHub accounts;
-- git identity switching;
-- comment-text approval fallbacks;
-- rollout to dead, paused, reference-only, or prior-art repositories;
-- branch-protection mutation before the gate has passed in each caller repo.
-
-## Pass And Fail Semantics
-
-The gate passes when at least one of these is true:
-
-| Signal | Required source | Notes |
+| Signal | Source | Meaning |
 | --- | --- | --- |
-| Code review | GitHub PR review state | At least one current review state is `APPROVED` according to GitHub review data. |
-| Agent approval | GitHub PR labels | At least one PR label is both syntactically an `approved[...]` label and present in the caller's configured allowed label list. |
+| Code review | GitHub PR review state | At least one current review state is `APPROVED`. |
+| Agent approval | GitHub PR labels | At least one PR label is both syntactically an `approved[...]` label and present in the configured allowed label list. |
 
-The gate fails when neither signal is present.
-
-The gate must ignore:
+The workflow ignores:
 
 - issue comments;
 - review comments;
 - PR body text;
 - commit messages;
+- branch names;
 - check-run names or output;
 - labels that contain approval-looking text but are not exact label names;
-- `approved[...]` labels that are not in the caller's configured allowed list.
+- `approved[...]` labels that are not in the configured allowed list.
 
-If both approval paths are present, the gate should pass and report both paths.
-The first implementation should not try to decide which approval path is more
-authoritative.
+Missing approval evidence is reported as missing merge approval and exits 0.
+Agency merge authority must block merge until a clean review record and accepted
+approval signal exist.
+
+## Failure Semantics
+
+The approval report must not fail CI because approval evidence is absent.
+
+It may still fail for workflow or infrastructure errors, including:
+
+- invalid input values;
+- invalid configured approval label syntax;
+- GitHub API or `gh` invocation failures while querying PR state;
+- runner setup failures such as an unavailable GitHub CLI install.
 
 ## Label Contract
 
@@ -82,20 +72,8 @@ hyphen:
 ^approved\[[A-Za-z0-9._-]+\]$
 ```
 
-Matching the shape is necessary but not sufficient. The caller must also
-configure the exact label name as allowed.
-
-Default allowed label:
-
-```text
-approved[agency]
-```
-
-The reusable workflow should accept a newline-delimited or comma-delimited
-`allowed-labels` input so a repository can explicitly permit labels such as
-`approved[agency]`, `approved[e0da]`, or a repo-specific agent label. The gate
-must not treat every syntactically valid `approved[...]` label as approval by
-default.
+Matching the shape is necessary but not sufficient. The workflow only reports
+labels that are explicitly configured through `allowed-labels`.
 
 Recommended label metadata:
 
@@ -105,20 +83,22 @@ Recommended label metadata:
 | Description | `Approved by agency merge authority` |
 | Color | `0E8A16` |
 
-## Reusable Workflow Shape
+## Workflow Shape
 
-The future implementation should live in `e0da/actions` as a reusable workflow,
-for example:
+The workflow remains at:
 
 ```text
 .github/workflows/approval-gate.yml
 ```
 
-Expected caller shape:
+The filename is retained for compatibility with existing callers. Its semantics
+are advisory.
+
+Optional caller shape for report-only visibility:
 
 ```yaml
 jobs:
-  approval-gate:
+  approval-report:
     uses: e0da/actions/.github/workflows/approval-gate.yml@main
     permissions:
       contents: read
@@ -128,22 +108,17 @@ jobs:
       allowed-labels: approved[agency]
 ```
 
-Required inputs:
+Do not make this job a required status check. Do not treat its success as merge
+approval.
+
+## Inputs
 
 | Input | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `allowed-labels` | string | `approved[agency]` | Comma- or newline-delimited exact approval labels. |
-
-Optional inputs:
-
-| Input | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `require-pr-event` | boolean | `true` | Fail when the workflow is not running for a pull request. |
-| `report-mode` | string | `summary` | Controls human-readable output only; it must not change pass/fail semantics. |
-
-The first implementation should run only against pull request context. Push-only
-events should either be excluded by caller workflow shape or fail clearly when
-`require-pr-event` is true.
+| `runner` | string | `puck-linux-arm64` | Runner label used by the report job. |
+| `allowed-labels` | string | `approved[agency]` | Comma- or newline-delimited exact approval labels to report. |
+| `require-pr-event` | boolean | `true` | Deprecated compatibility input. Non-PR events always skip successfully. |
+| `report-mode` | string | `summary` | Human-readable output mode. It does not change exit status for missing approval. |
 
 ## Permissions
 
@@ -161,75 +136,32 @@ because GitHub pull request labels are exposed through issue/PR label APIs.
 `contents: read` supports checkout-free GitHub API workflows and keeps the job
 compatible with normal repository read policy.
 
-No write permission is required for the gate. The gate observes approval state;
-it does not create labels, post comments, mutate PR metadata, or change branch
+No write permission is required. The workflow observes approval state; it does
+not create labels, post comments, mutate PR metadata, merge PRs, or change branch
 protection.
 
-The gate must not require `gh` as a preinstalled runner capability. If the
-selected runner does not already expose GitHub CLI on `PATH`, the reusable
-workflow installs it before querying the live PR APIs.
+## Merge Authority Boundary
 
-## Implementation Notes
+Approval enforcement belongs outside CI:
 
-The implementation should query GitHub APIs for the live PR state instead of
-parsing rendered timeline text.
+1. review the PR and fix blocking findings;
+2. verify CI/build/test evidence;
+3. add the appropriate `approved[...]` label when the repo uses approval labels;
+4. run `gt merge --dry-run` from the intended branch;
+5. merge through `gt merge` only when Agency merge authority is active and the
+   review record is clean.
 
-Recommended behavior:
-
-1. resolve the current pull request number from `github.event.pull_request`;
-2. fetch PR labels from GitHub issue/PR label data;
-3. fetch review data from GitHub pull request review data;
-4. normalize configured `allowed-labels`;
-5. check for an exact allowed-label match on the live PR labels;
-6. check for an approved review signal from GitHub review state;
-7. emit a concise summary naming which path passed or why both paths failed;
-8. exit nonzero when neither path passes.
-
-The gate should print:
-
-- whether an `APPROVED` code review was found;
-- which allowed `approved[...]` labels were found;
-- which approval labels existed but were ignored because they were not allowed;
-- the configured allowed label set.
-
-The gate should not print secrets or full event payloads.
-
-## Rollout Contract
-
-Rollout is intentionally separate from implementation.
-
-Before opting repositories in, E0D-1122 must classify current repositories as:
-
-- living;
-- paused/reference;
-- dead/out of scope.
-
-Only living repositories should be opted in by E0D-1123. Known dead or inactive
-surfaces called out by the user, including `brain`, `heres-a-tip`, and
-`Fabric`, must not be touched unless the canonical active-repo inventory says
-otherwise.
-
-For each living repository:
-
-1. ensure the real `approved[agency]` label exists or create it with the
-   recommended metadata;
-2. add the reusable approval gate in a PR;
-3. verify the gate passes with a real `APPROVED` review or a real allowed
-   `approved[...]` label;
-4. only then consider branch protection / required-check changes, if that repo
-   uses required checks;
-5. record which approval path was used for the rollout PR.
+This workflow can provide supporting visibility for step 3, but it is not the
+step 3 enforcement mechanism.
 
 ## Acceptance Checklist
 
-- Pass condition is real GitHub `APPROVED` review or real allowed
-  `approved[...]` PR label.
-- Fail condition is neither signal present.
+- Missing approval exits 0 and reports that merge authority must block merge.
+- Real GitHub `APPROVED` reviews are reported.
+- Real allowed `approved[...]` PR labels are reported.
 - Comment-only approvals do not count.
-- The opt-in shape is a reusable workflow included by each caller repository.
 - Allowed labels are exact configured names, not every syntactically valid
   `approved[...]` label.
 - Required permissions are `contents: read`, `pull-requests: read`, and
   `issues: read`.
-- The rationale explicitly avoids puppet accounts and git identity switching.
-- Rollout target is current living projects only after inventory.
+- No E0DA repo should add this workflow as a required status check.
