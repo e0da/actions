@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: read-write
+      beam-mode:
+        description: "BEAM setup policy. setup-beam preserves hosted behavior; runner-preinstalled uses erl/elixir/mix already on PATH."
+        required: false
+        type: string
+        default: setup-beam
 
 jobs:
   mix:
@@ -43,9 +48,10 @@ jobs:
     env:
       MIX_ENV: test
     steps:
-      - name: Validate cache mode
+      - name: Validate policy modes
         env:
           CACHE_MODE: ${{ inputs.cache-mode }}
+          BEAM_MODE: ${{ inputs.beam-mode }}
         run: |
           set -eu
 
@@ -58,13 +64,36 @@ jobs:
               ;;
           esac
 
+          case "$BEAM_MODE" in
+            setup-beam|runner-preinstalled)
+              ;;
+            *)
+              echo "::error::Unknown beam-mode '${BEAM_MODE}'. Expected one of: setup-beam, runner-preinstalled."
+              exit 1
+              ;;
+          esac
+
       - uses: actions/checkout@v5
 
       - name: Set up BEAM
+        if: inputs.beam-mode == 'setup-beam'
         uses: erlef/setup-beam@v1
         with:
           otp-version: ${{ inputs.otp-version }}
           elixir-version: ${{ inputs.elixir-version }}
+
+      - name: Verify preinstalled BEAM
+        if: inputs.beam-mode == 'runner-preinstalled'
+        run: |
+          set -eu
+
+          command -v erl
+          command -v elixir
+          command -v mix
+
+          erl -version
+          elixir --version
+          mix --version
 
       - name: Cache Mix deps
         if: inputs.cache-mode == 'read-write'
