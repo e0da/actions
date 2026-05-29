@@ -1,0 +1,246 @@
+name: Hosted Runner Drift Report
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "Policy mode. report emits findings and exits 0; enforce is reserved until M6 proof enables blocking."
+        required: false
+        type: string
+        default: report
+      runner:
+        description: "Runner label for the report job."
+        required: false
+        type: string
+        default: puck-linux-arm64
+      allowlist-path:
+        description: "Caller-owned TSV file documenting approved hosted fallback."
+        required: false
+        type: string
+        default: .github/samos-hosted-runner-allowlist.tsv
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Policy mode."
+        required: false
+        type: choice
+        options:
+          - report
+          - enforce
+        default: report
+      runner:
+        description: "Runner label for the report job."
+        required: false
+        type: string
+        default: puck-linux-arm64
+      allowlist-path:
+        description: "Caller-owned TSV file documenting approved hosted fallback."
+        required: false
+        type: string
+        default: .github/samos-hosted-runner-allowlist.tsv
+
+jobs:
+  hosted-drift-report:
+    name: Hosted runner drift report
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Scan workflow runner routing
+        env:
+          MODE: ${{ inputs.mode }}
+          ALLOWLIST_PATH: ${{ inputs.allowlist-path }}
+        run: |
+          set -eu
+
+          case "$MODE" in
+            report|enforce) ;;
+            *)
+              echo "::error::Unknown mode '${MODE}'. Expected report or enforce."
+              exit 1
+              ;;
+          esac
+
+          temp_root="${RUNNER_TEMP:-/tmp}"
+          mkdir -p "$temp_root"
+          workdir="$(mktemp -d "${temp_root}/hosted-drift-report.XXXXXX")"
+
+          hosted="$workdir/hosted.tsv"
+          puck="$workdir/puck.tsv"
+          unknown="$workdir/unknown.tsv"
+          allowlist="$workdir/allowlist.tsv"
+          : > "$hosted"
+          : > "$puck"
+          : > "$unknown"
+          : > "$allowlist"
+
+          emit() {
+            bucket="$1"
+            file="$2"
+            line="$3"
+            reason="$4"
+            text="$5"
+
+            case "$bucket" in
+              hosted) target="$hosted" ;;
+              puck) target="$puck" ;;
+              unknown) target="$unknown" ;;
+              *)
+                echo "::error::internal error: unknown bucket '${bucket}'"
+                exit 1
+                ;;
+            esac
+
+            printf '%s\t%s\t%s\t%s\n' "$file" "$line" "$reason" "$text" >> "$target"
+          }
+
+          scan_runs_on() {
+            file="$1"
+            awk '
+              /^[[:space:]]*runs-on:[[:space:]]*/ {
+                text=$0
+                if (text ~ /(ubuntu-latest|macos-latest|windows-latest)/) {
+                  print FNR "\thosted\tdirect hosted runs-on\t" text
+                } else if (text ~ /(self-hosted|puck)/) {
+                  print FNR "\tpuck\tdirect Puck/self-hosted runs-on\t" text
+                } else if (text ~ /\$\{\{/) {
+                  print FNR "\tunknown\texpression runs-on\t" text
+                }
+              }
+            ' "$file" | while IFS="$(printf '\t')" read -r line bucket reason text; do
+              emit "$bucket" "$file" "$line" "$reason" "$text"
+            done
+          }
+
+          scan_reusable_calls() {
+            file="$1"
+            awk '/uses:[[:space:]]*e0da\/actions\/\.github\/workflows\/[^[:space:]]+\.yml@/ { print FNR "\t" $0 }' "$file" |
+              while IFS="$(printf '\t')" read -r line text; do
+                workflow="$(printf '%s\n' "$text" | sed -n 's/.*e0da\/actions\/\.github\/workflows\/\([^@[:space:]]*\.yml\)@.*/\1/p')"
+                window="$(tail -n +"$line" "$file" | sed -n '1,30p')"
+
+                case "$workflow" in
+                  deploy-compose.yml)
+                    emit puck "$file" "$line" "deploy-compose hard-routes to Puck" "$text"
+                    continue
+                    ;;
+                esac
+
+                if printf '%s\n' "$window" | grep -Eq '^[[:space:]]+[a-zA-Z0-9_-]*runner:[[:space:]]*(puck|.*self-hosted)'; then
+                  emit puck "$file" "$line" "reusable call passes Puck/self-hosted runner input" "$text"
+                elif printf '%s\n' "$window" | grep -Eq '^[[:space:]]+[a-zA-Z0-9_-]*runner:[[:space:]]*(ubuntu-latest|macos-latest|windows-latest)'; then
+                  emit hosted "$file" "$line" "reusable call passes hosted runner input" "$text"
+                elif printf '%s\n' "$window" | grep -Eq '^[[:space:]]+[a-zA-Z0-9_-]*runner:[[:space:]]*\$\{\{'; then
+                  emit unknown "$file" "$line" "reusable call uses expression runner input" "$text"
+                else
+                  case "$workflow" in
+                    ci-*.yml|release-rust.yml)
+                      emit hosted "$file" "$line" "reusable call omits explicit runner override" "$text"
+                      ;;
+                    *)
+                      emit unknown "$file" "$line" "unclassified e0da/actions reusable call" "$text"
+                      ;;
+                  esac
+                fi
+              done
+          }
+
+          if [ -f "$ALLOWLIST_PATH" ]; then
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                fields=split($0, parts, "\t")
+                if (fields < 6) {
+                  print FNR "\tinvalid\t" $0
+                } else {
+                  print FNR "\tlisted\t" $0
+                }
+              }
+            ' "$ALLOWLIST_PATH" > "$allowlist"
+          fi
+
+          if [ ! -d .github/workflows ]; then
+            echo "::notice::No .github/workflows directory found."
+          else
+            find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | sort |
+              while IFS= read -r file; do
+                scan_runs_on "$file"
+                scan_reusable_calls "$file"
+              done
+          fi
+
+          hosted_count="$(wc -l < "$hosted" | tr -d ' ')"
+          puck_count="$(wc -l < "$puck" | tr -d ' ')"
+          unknown_count="$(wc -l < "$unknown" | tr -d ' ')"
+          allowlist_count="$(grep -c '	listed	' "$allowlist" || true)"
+          invalid_allowlist_count="$(grep -c '	invalid	' "$allowlist" || true)"
+
+          {
+            echo "# Hosted Runner Drift Report"
+            echo
+            echo "| Bucket | Count |"
+            echo "| --- | ---: |"
+            echo "| Hosted findings | ${hosted_count} |"
+            echo "| Puck/self-hosted findings | ${puck_count} |"
+            echo "| Unknown findings | ${unknown_count} |"
+            echo "| Allowlist entries | ${allowlist_count} |"
+            echo "| Invalid allowlist entries | ${invalid_allowlist_count} |"
+            echo
+            echo "Mode: \`${MODE}\`"
+            echo
+            echo "Allowlist path: \`${ALLOWLIST_PATH}\`"
+            echo
+            print_table() {
+              title="$1"
+              path="$2"
+              echo "## ${title}"
+              echo
+              if [ ! -s "$path" ]; then
+                echo "None."
+                echo
+                return
+              fi
+              echo "| File | Line | Reason | Source |"
+              echo "| --- | ---: | --- | --- |"
+              while IFS="$(printf '\t')" read -r file line reason text; do
+                escaped_text="$(printf '%s' "$text" | sed 's/|/\\|/g')"
+                echo "| \`${file}\` | ${line} | ${reason} | \`${escaped_text}\` |"
+              done < "$path"
+              echo
+            }
+            print_table "Hosted Findings" "$hosted"
+            print_table "Puck/Self-Hosted Findings" "$puck"
+            print_table "Unknown Findings" "$unknown"
+            echo "## Allowlist"
+            echo
+            if [ -s "$allowlist" ]; then
+              echo "\`\`\`text"
+              cat "$allowlist"
+              echo "\`\`\`"
+            else
+              echo "None."
+            fi
+          } | tee "$workdir/summary.md"
+
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            cat "$workdir/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$invalid_allowlist_count" -gt 0 ]; then
+            echo "::warning::Invalid allowlist entries were found in ${ALLOWLIST_PATH}."
+          fi
+
+          if [ "$hosted_count" -gt 0 ]; then
+            echo "::notice::Hosted runner findings were reported. M6-S1 report mode does not block."
+          fi
+
+          if [ "$unknown_count" -gt 0 ]; then
+            echo "::notice::Unknown runner findings were reported. Review before enabling blocking enforcement."
+          fi
+
+          if [ "$MODE" = enforce ]; then
+            echo "::error::mode=enforce is reserved until M6 report-only proof enables blocking enforcement."
+            exit 1
+          fi
