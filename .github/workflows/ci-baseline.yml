@@ -59,11 +59,50 @@ jobs:
       pull-requests: read
       statuses: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        continue-on-error: true
+
+      - name: Install Gitleaks CLI
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+
+          case "${RUNNER_OS}_${RUNNER_ARCH}" in
+            Linux_X64)
+              asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+              sha256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+              ;;
+            Linux_ARM64)
+              asset="gitleaks_${GITLEAKS_VERSION}_linux_arm64.tar.gz"
+              sha256="e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"
+              ;;
+            macOS_X64)
+              asset="gitleaks_${GITLEAKS_VERSION}_darwin_x64.tar.gz"
+              sha256="dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"
+              ;;
+            macOS_ARM64)
+              asset="gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
+              sha256="b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
+              ;;
+            *)
+              echo "unsupported runner for Gitleaks CLI install: ${RUNNER_OS}_${RUNNER_ARCH}" >&2
+              exit 1
+              ;;
+          esac
+
+          archive_path="${RUNNER_TEMP}/${asset}"
+          install_dir="${RUNNER_TEMP}/gitleaks-bin"
+          curl --fail --silent --show-error --location \
+            --output "$archive_path" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          echo "${sha256}  ${archive_path}" | shasum -a 256 --check
+          mkdir -p "$install_dir"
+          tar -xzf "$archive_path" -C "$install_dir" gitleaks
+          chmod +x "${install_dir}/gitleaks"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Secret scan
+        continue-on-error: true
+        run: gitleaks detect --source . --verbose --redact

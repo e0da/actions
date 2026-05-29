@@ -15,12 +15,10 @@ container execution.
 Checks that apply universally:
 
 - **PR title**: must follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat|fix|chore|docs|refactor|test|ci: description`)
-- **Secret scan**: runs [Gitleaks](https://github.com/gitleaks/gitleaks-action) on full history
+- **Secret scan**: installs a pinned [Gitleaks](https://github.com/gitleaks/gitleaks) CLI release and scans full history
 
 Branch names are intentionally not checked here. Graphite owns branch naming and
 stack process for repos that use Graphite.
-
-> `GITLEAKS_LICENSE` secret is optional — without it Gitleaks runs in OSS mode with a rate limit.
 
 Callers can override `runner` when both baseline jobs should run on a different
 runner label, for example `puck-linux-arm64`.

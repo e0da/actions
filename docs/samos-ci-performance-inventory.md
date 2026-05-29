@@ -7,17 +7,45 @@ Scope: E0D-1002 under E0D-999. This inventories reusable workflows in
 `stack`, `mcog`, `symphonic`, and `wiki`. It records current setup overhead and
 candidate policy knobs only; it does not implement new inputs.
 
-Related out of scope: Node 24 runtime compatibility for marketplace actions is
-tracked separately in
+Related follow-up: Node 24 runtime compatibility for marketplace actions is
+tracked in
 [E0D-1005](https://linear.app/e0da/issue/E0D-1005/actions-upgrade-marketplace-actions-for-node-24-runtime-compatibility).
 Per E0D-1005, GitHub's official changelog says the Node 24 default begins on
-2026-06-16. This inventory does not implement that upgrade work.
+2026-06-16. That follow-up now upgrades or replaces Node-backed marketplace
+actions while preserving hosted runner defaults.
 
 ## Method
 
 Evidence is limited to local repo files read during this inventory. Citations use
 paths relative to `/Users/bug/src/actions` when the file is in this repo and
 `../<repo>/...` when the evidence is in another active SAMOS repo.
+
+## E0D-1005 Node 24 Marketplace Action Decision
+
+Pre-change inventory from the reusable workflows:
+
+| Action | Before E0D-1005 | Decision |
+| --- | --- | --- |
+| `actions/checkout` | `v4`, Node 20 | Upgrade to `v5`, which uses Node 24. Do not use `v6` yet because this repo has not tested the `v6` credential persistence behavior. |
+| `actions/cache` | `v4`, Node 20 | Upgrade to `v5`, which uses Node 24. |
+| `actions/upload-artifact` | `v4`, Node 20 | Upgrade to `v7`, which uses Node 24. |
+| `actions/download-artifact` | `v4`, Node 20 | Upgrade to `v8`, which uses Node 24. |
+| `opentofu/setup-opentofu` | `v1`, Node 20 | Upgrade to `v2`, which uses Node 24 and preserves the current `tofu_version` and `tofu_wrapper` inputs. |
+| `softprops/action-gh-release` | `v2`, Node 20 | Upgrade to `v3`, which uses Node 24 and preserves the current release inputs. |
+| `docker/login-action` | `v3`, Node 20 | Upgrade to `v4`, which uses Node 24 and preserves the current registry login inputs. |
+| `docker/setup-buildx-action` | `v3`, Node 20 | Upgrade to `v4`, which uses Node 24. |
+| `docker/build-push-action` | `v6`, Node 20 | Upgrade to `v7`, which uses Node 24 and preserves the current build inputs. |
+| `gitleaks/gitleaks-action` | `v2`, Node 20; no Node 24 major currently available | Replace with direct `gitleaks` CLI execution pinned to `v8.30.1`, downloaded from the official `gitleaks/gitleaks` release assets with per-runner sha256 verification. This avoids deferring E0D-1005 on the baseline secret-scan path. |
+| `ruby/setup-ruby` | `v1`, Node 24 | Keep. |
+| `erlef/setup-beam` | `v1`, Node 24 | Keep. |
+| `oven-sh/setup-bun` | `v2`, Node 24 | Keep. |
+| `Swatinem/rust-cache` | `v2`, Node 24 | Keep. |
+| `lycheeverse/lychee-action` | `v2`, composite action | Keep. |
+| `taiki-e/install-action` | `v2`, composite action | Keep. |
+
+Hosted fallback compatibility remains unchanged: reusable workflow runner inputs
+still default to `ubuntu-latest` where they did before, and Puck-specific deploy
+or smoke workflows keep their existing self-hosted runner labels.
 
 ## Active SAMOS Call Sites
 
@@ -50,12 +78,14 @@ adopted by active repos later.
   `.github/workflows/ci-baseline.yml:15`,
   `.github/workflows/ci-baseline.yml:56`.
 - Setup overhead: PR title job shells out to `gh api`; secret scan checks out
-  full history and runs `gitleaks/gitleaks-action@v2`. Evidence:
+  full history, downloads a pinned Gitleaks CLI release, verifies its sha256,
+  and runs `gitleaks detect`. Evidence:
   `.github/workflows/ci-baseline.yml:21`,
   `.github/workflows/ci-baseline.yml:31`,
   `.github/workflows/ci-baseline.yml:62`,
-  `.github/workflows/ci-baseline.yml:64`,
-  `.github/workflows/ci-baseline.yml:65`.
+  `.github/workflows/ci-baseline.yml:66`,
+  `.github/workflows/ci-baseline.yml:100`,
+  `.github/workflows/ci-baseline.yml:108`.
 - Cache behavior: none.
 - Artifact behavior: none.
 - Architecture assumptions: assumes `gh` is available on the runner for PR title
@@ -121,7 +151,7 @@ adopted by active repos later.
   default compatibility. Evidence: `.github/workflows/ci-opentofu.yml:6`,
   `.github/workflows/ci-opentofu.yml:10`,
   `.github/workflows/ci-opentofu.yml:30`.
-- Setup overhead: always checks out and runs `opentofu/setup-opentofu@v1` with
+- Setup overhead: always checks out and runs `opentofu/setup-opentofu@v2` with
   wrapper disabled, then runs configurable format and validate commands.
   Evidence: `.github/workflows/ci-opentofu.yml:34`,
   `.github/workflows/ci-opentofu.yml:36`,
@@ -217,7 +247,7 @@ Evidence:
   `.github/workflows/ci-markdown.yml:31`, `.github/workflows/ci-markdown.yml:39`.
 - Jekyll uses `ruby/setup-ruby` off macOS and Homebrew Ruby on macOS. Evidence:
   `.github/workflows/ci-jekyll.yml:38`, `.github/workflows/ci-jekyll.yml:45`.
-- OpenTofu always uses `opentofu/setup-opentofu@v1`. Evidence:
+- OpenTofu always uses `opentofu/setup-opentofu@v2`. Evidence:
   `.github/workflows/ci-opentofu.yml:36`.
 - Rust always installs a toolchain and nextest, with optional installers for SOPS
   and NATS. Evidence: `.github/workflows/ci-rust.yml:183`,
@@ -240,7 +270,7 @@ Evidence:
 - Jekyll non-macOS uses Bundler caching via `ruby/setup-ruby`; macOS uses
   `$RUNNER_TEMP/bundle`. Evidence: `.github/workflows/ci-jekyll.yml:43`,
   `.github/workflows/ci-jekyll.yml:73`.
-- Elixir caches `deps` and `_build` using `actions/cache@v4`. Evidence:
+- Elixir caches `deps` and `_build` using `actions/cache@v5`. Evidence:
   `.github/workflows/ci-elixir.yml:49`,
   `.github/workflows/ci-elixir.yml:52`.
 - Rust and Rust release use `Swatinem/rust-cache@v2`. Evidence:
