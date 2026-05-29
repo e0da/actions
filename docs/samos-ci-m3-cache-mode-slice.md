@@ -169,6 +169,8 @@ Caller proof for `E0D-1051` must record:
 - observed `erl`, `elixir`, and `mix` versions plus setup-beam output
 - run URL and conclusion
 - job URL, runner name, labels, queue duration, and execution duration
+- `cache_exact_key_hit` from the Elixir CI policy summary, plus the
+  `actions/cache` logs when restore-key behavior matters
 - whether the migration was behavior-preserving or a cache-off experiment
 
 ## Rollback
