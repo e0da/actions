@@ -31,12 +31,27 @@ stack process for repos that use Graphite.
 Callers can override `runner` when both baseline jobs should run on a different
 runner label, for example `puck-linux-arm64`.
 
-### Planned approval gate
+### `approval-gate.yml` — Opt-in review provenance gate
 
-M10 will add an opt-in approval gate that accepts either a real GitHub
-`APPROVED` review or a real allowed `approved[...]` GitHub label. The contract is
+Opt-in gate that accepts either a real GitHub `APPROVED` review or a real
+allowed `approved[...]` GitHub label. It inspects live GitHub review and label
+state; comments containing approval-looking text do not count. The contract is
 documented in [`docs/samos-ci-m10-approval-gate-contract.md`](docs/samos-ci-m10-approval-gate-contract.md).
-The gate is not implemented yet.
+
+Callers can override `runner`, configure exact `allowed-labels`, and choose
+whether non-PR events fail with `require-pr-event`.
+
+```yaml
+jobs:
+  approval-gate:
+    uses: e0da/actions/.github/workflows/approval-gate.yml@main
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    with:
+      allowed-labels: approved[agency]
+```
 
 ### `ci-typescript-bun.yml` — TypeScript/Bun repos
 

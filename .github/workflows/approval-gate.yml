@@ -1,0 +1,197 @@
+name: Approval Gate
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the approval gate job."
+        required: false
+        type: string
+        default: puck-linux-arm64
+      allowed-labels:
+        description: "Comma- or newline-delimited exact approved[...] labels that may satisfy the gate."
+        required: false
+        type: string
+        default: approved[agency]
+      require-pr-event:
+        description: "When true, fail if the workflow is not running for a pull request."
+        required: false
+        type: boolean
+        default: true
+      report-mode:
+        description: "Human-readable output mode. Does not change pass/fail semantics."
+        required: false
+        type: string
+        default: summary
+
+jobs:
+  approval-gate:
+    name: Approval Gate
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Evaluate approval gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          ALLOWED_LABELS: ${{ inputs.allowed-labels }}
+          REQUIRE_PR_EVENT: ${{ inputs.require-pr-event }}
+          REPORT_MODE: ${{ inputs.report-mode }}
+        run: |
+          set -eu
+
+          case "$REQUIRE_PR_EVENT" in
+            true|false) ;;
+            *)
+              echo "::error::require-pr-event must be true or false, got '${REQUIRE_PR_EVENT}'."
+              exit 1
+              ;;
+          esac
+
+          case "$REPORT_MODE" in
+            summary|log) ;;
+            *)
+              echo "::error::report-mode must be summary or log, got '${REPORT_MODE}'."
+              exit 1
+              ;;
+          esac
+
+          temp_root="${RUNNER_TEMP:-/tmp}"
+          mkdir -p "$temp_root"
+          workdir="$(mktemp -d "${temp_root}/approval-gate.XXXXXX")"
+          trap 'rm -rf "$workdir"' EXIT INT TERM
+
+          allowed_file="$workdir/allowed-labels.txt"
+          live_labels_file="$workdir/live-labels.txt"
+          matched_labels_file="$workdir/matched-labels.txt"
+          ignored_approval_labels_file="$workdir/ignored-approval-labels.txt"
+          latest_reviews_file="$workdir/latest-reviews.tsv"
+          approved_reviewers_file="$workdir/approved-reviewers.txt"
+          : > "$allowed_file"
+          : > "$live_labels_file"
+          : > "$matched_labels_file"
+          : > "$ignored_approval_labels_file"
+          : > "$latest_reviews_file"
+          : > "$approved_reviewers_file"
+
+          is_approval_label() {
+            printf '%s\n' "$1" | grep -Eq '^approved\[[A-Za-z0-9._-]+\]$'
+          }
+
+          normalize_allowed_labels() {
+            printf '%s\n' "$ALLOWED_LABELS" |
+              tr ',' '\n' |
+              sed 's/^[[:space:]]*//' |
+              sed 's/[[:space:]]*$//' |
+              sed '/^$/d'
+          }
+
+          normalize_allowed_labels | sort -u > "$allowed_file"
+
+          if [ ! -s "$allowed_file" ]; then
+            echo "::error::allowed-labels must contain at least one label."
+            exit 1
+          fi
+
+          while IFS= read -r allowed_label; do
+            if ! is_approval_label "$allowed_label"; then
+              echo "::error::allowed approval label '${allowed_label}' must match approved[<approver-id>]."
+              exit 1
+            fi
+          done < "$allowed_file"
+
+          if [ -z "${PULL_REQUEST_NUMBER:-}" ]; then
+            if [ "$REQUIRE_PR_EVENT" = true ]; then
+              echo "::error::approval gate requires pull request context."
+              exit 1
+            fi
+
+            echo "Approval gate skipped outside pull request context."
+            exit 0
+          fi
+
+          gh api "repos/${REPOSITORY}/issues/${PULL_REQUEST_NUMBER}/labels" \
+            --paginate \
+            --jq '.[].name' > "$live_labels_file"
+
+          while IFS= read -r live_label; do
+            if grep -Fx "$live_label" "$allowed_file" >/dev/null; then
+              printf '%s\n' "$live_label" >> "$matched_labels_file"
+            elif is_approval_label "$live_label"; then
+              printf '%s\n' "$live_label" >> "$ignored_approval_labels_file"
+            fi
+          done < "$live_labels_file"
+
+          gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/reviews" \
+            --paginate \
+            --jq '.[] | [.user.login, .state] | @tsv' |
+            awk -F "$(printf '\t')" '
+              NF >= 2 { latest[$1] = $2 }
+              END {
+                for (reviewer in latest) {
+                  print reviewer "\t" latest[reviewer]
+                }
+              }
+            ' > "$latest_reviews_file"
+
+          awk -F "$(printf '\t')" '$2 == "APPROVED" { print $1 }' "$latest_reviews_file" |
+            sort -u > "$approved_reviewers_file"
+
+          join_file() {
+            awk '
+              BEGIN { first = 1 }
+              {
+                if (!first) {
+                  printf ", "
+                }
+                printf "%s", $0
+                first = 0
+              }
+              END {
+                if (first) {
+                  printf "none"
+                }
+                printf "\n"
+              }
+            ' "$1"
+          }
+
+          summary_file="${GITHUB_STEP_SUMMARY:-}"
+          write_summary() {
+            if [ -n "$summary_file" ]; then
+              {
+                echo "## Approval Gate"
+                echo
+                echo "| Field | Value |"
+                echo "| --- | --- |"
+                echo "| Pull request | #${PULL_REQUEST_NUMBER} |"
+                echo "| Allowed labels | $(join_file "$allowed_file") |"
+                echo "| Matched labels | $(join_file "$matched_labels_file") |"
+                echo "| Ignored approval labels | $(join_file "$ignored_approval_labels_file") |"
+                echo "| Approved reviewers | $(join_file "$approved_reviewers_file") |"
+              } >> "$summary_file"
+            fi
+          }
+
+          write_summary
+
+          if [ -s "$matched_labels_file" ] || [ -s "$approved_reviewers_file" ]; then
+            echo "Approval gate passed."
+            if [ -s "$approved_reviewers_file" ]; then
+              echo "Approved review signal: $(join_file "$approved_reviewers_file")"
+            fi
+            if [ -s "$matched_labels_file" ]; then
+              echo "Approved label signal: $(join_file "$matched_labels_file")"
+            fi
+            exit 0
+          fi
+
+          echo "::error::approval gate failed: expected a real APPROVED review or a real allowed approved[...] label."
+          if [ -s "$ignored_approval_labels_file" ]; then
+            echo "Ignored approval labels: $(join_file "$ignored_approval_labels_file")"
+          fi
+          exit 1
