@@ -15,7 +15,7 @@ concurrency:
 jobs:
   workflow-lint:
     name: Workflow Lint
-    runs-on: [self-hosted, puck-linux-arm64]
+    runs-on: actions-linux-arm64
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -41,7 +41,7 @@ jobs:
 
   script-fixtures:
     name: Script Fixtures
-    runs-on: [self-hosted, puck-linux-arm64]
+    runs-on: actions-linux-arm64
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -71,5 +71,6 @@ jobs:
           PATH="$RUNNER_TEMP/actions-self-ci/bin:$PATH"
           shellcheck tests/*.sh
           sh tests/approval_gate.sh
+          sh tests/actions_self_ci_arc_route.sh
           sh tests/hosted_drift_report.sh
           sh tests/runner_manifest_validation.sh
