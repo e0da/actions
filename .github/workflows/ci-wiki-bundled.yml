@@ -1,0 +1,903 @@
+name: Reusable Wiki CI
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the bundled wiki CI job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      runner-profile:
+        description: "Optional runner profile metadata for validation; does not affect scheduling."
+        required: false
+        type: string
+        default: ""
+      runner-capabilities:
+        description: "Optional requested runner capability metadata for validation."
+        required: false
+        type: string
+        default: ""
+      runner-manifest:
+        description: "Optional puck-linux-runner-image-contract.v1 JSON used to validate requested runner capabilities."
+        required: false
+        type: string
+        default: ""
+      tool-mode:
+        description: "Tool setup mode for markdown link checking."
+        required: false
+        type: string
+        default: workflow-install
+      link-args:
+        description: "Arguments passed to lychee."
+        required: false
+        type: string
+        default: >-
+          --verbose
+          --no-progress
+          --exclude-loopback
+          --exclude-private
+          --exclude "^mailto:"
+          --exclude "^https://github.com/e0da/"
+          '**/*.md'
+      ruby-version:
+        description: "Ruby version passed to ruby/setup-ruby on non-macOS runners. macOS self-hosted runners use Homebrew Ruby."
+        required: false
+        type: string
+        default: "3.2"
+      build-command:
+        description: "Command that builds the Jekyll site."
+        required: false
+        type: string
+        default: "bundle exec jekyll build --strict_front_matter"
+      test-command:
+        description: "Optional command that runs repository-specific site checks after build."
+        required: false
+        type: string
+        default: ""
+      hosted-drift-mode:
+        description: "Hosted runner drift policy mode."
+        required: false
+        type: string
+        default: report
+      hosted-drift-allowlist-path:
+        description: "Caller-owned TSV file documenting approved hosted fallback."
+        required: false
+        type: string
+        default: .github/samos-hosted-runner-allowlist.tsv
+      approval-labels:
+        description: "Comma- or newline-delimited exact approved[...] labels to report as merge approval signals."
+        required: false
+        type: string
+        default: approved[agency]
+      approval-report:
+        description: "Emit the advisory approval report on pull requests."
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  wiki-ci:
+    name: Wiki CI
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      statuses: write
+    env:
+      JEKYLL_ENV: production
+    steps:
+      - name: Add runner-local tools to PATH
+        run: |
+          set -eu
+
+          if [ -d "$HOME/.local/bin" ]; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Validate runner contract
+        env:
+          RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
+          RUNNER_CAPABILITIES: ${{ inputs['runner-capabilities'] }}
+          RUNNER_MANIFEST: ${{ inputs['runner-manifest'] }}
+          TOOL_MODE: ${{ inputs['tool-mode'] }}
+          OBSERVED_RUNNER_OS: ${{ runner.os }}
+          OBSERVED_RUNNER_ARCH: ${{ runner.arch }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -eu
+
+          case "$TOOL_MODE" in
+            workflow-install|runner-preinstalled) ;;
+            *)
+              echo "::error::Unknown tool-mode '${TOOL_MODE}'. Expected one of: workflow-install, runner-preinstalled."
+              exit 1
+              ;;
+          esac
+
+          case "$RUNNER_PROFILE" in
+            ""|hosted-linux|puck-linux-arm64|puck-macos-arm64) ;;
+            *)
+              echo "::error::Unknown runner-profile '${RUNNER_PROFILE}'. Expected one of: hosted-linux, puck-linux-arm64, puck-macos-arm64."
+              exit 1
+              ;;
+          esac
+
+          require_runner() {
+            expected_os="$1"
+            expected_arch="${2:-}"
+
+            if [ "$OBSERVED_RUNNER_OS" != "$expected_os" ]; then
+              echo "::error::runner-profile '${RUNNER_PROFILE}' requires runner.os '${expected_os}', got '${OBSERVED_RUNNER_OS}'."
+              exit 1
+            fi
+
+            if [ -n "$expected_arch" ] && [ "$OBSERVED_RUNNER_ARCH" != "$expected_arch" ]; then
+              echo "::error::runner-profile '${RUNNER_PROFILE}' requires runner.arch '${expected_arch}', got '${OBSERVED_RUNNER_ARCH}'."
+              exit 1
+            fi
+          }
+
+          case "$RUNNER_PROFILE" in
+            hosted-linux) require_runner Linux ;;
+            puck-linux-arm64) require_runner Linux ARM64 ;;
+            puck-macos-arm64) require_runner macOS ARM64 ;;
+          esac
+
+          validate_runner_manifest() {
+            [ -n "$RUNNER_MANIFEST" ] || return 0
+
+            if ! command -v jq >/dev/null 2>&1; then
+              echo "::error::runner-manifest was provided, but jq was not found."
+              exit 1
+            fi
+
+            schema="$(printf '%s' "$RUNNER_MANIFEST" | jq -r '.schema_version // ""')"
+            if [ "$schema" != "puck-linux-runner-image-contract.v1" ]; then
+              echo "::error::runner-manifest schema_version must be puck-linux-runner-image-contract.v1, got '${schema:-<missing>}'."
+              exit 1
+            fi
+
+            repo="${REPOSITORY#*/}"
+            runner_entry="$(printf '%s' "$RUNNER_MANIFEST" | jq -c --arg repo "$repo" '.runners[]? | select(.runner_identity.repo == $repo)' | sed -n '1p')"
+            if [ -z "$runner_entry" ]; then
+              echo "::error::runner-manifest missing runners[].runner_identity.repo entry for '${repo}'."
+              exit 1
+            fi
+
+            manifest_profile="$(printf '%s' "$runner_entry" | jq -r '.runner_identity.runner_profile // ""')"
+            if [ -n "$RUNNER_PROFILE" ] && [ "$manifest_profile" != "$RUNNER_PROFILE" ]; then
+              echo "::error::runner-manifest runner_identity.runner_profile expected '${RUNNER_PROFILE}', got '${manifest_profile:-<missing>}'."
+              exit 1
+            fi
+
+            manifest_os="$(printf '%s' "$runner_entry" | jq -r '.intended_contract_state.runner_os // ""')"
+            if [ -n "$manifest_os" ] && [ "$manifest_os" != "$OBSERVED_RUNNER_OS" ]; then
+              echo "::error::runner-manifest intended_contract_state.runner_os expected '${OBSERVED_RUNNER_OS}', got '${manifest_os}'."
+              exit 1
+            fi
+
+            manifest_arch="$(printf '%s' "$runner_entry" | jq -r '.intended_contract_state.runner_arch // ""')"
+            if [ -n "$manifest_arch" ] && [ "$manifest_arch" != "$OBSERVED_RUNNER_ARCH" ]; then
+              echo "::error::runner-manifest intended_contract_state.runner_arch expected '${OBSERVED_RUNNER_ARCH}', got '${manifest_arch}'."
+              exit 1
+            fi
+
+            if [ "$manifest_profile" = "puck-linux-arm64" ]; then
+              runner_local_bin_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.path // ""')"
+              if [ "$runner_local_bin_path" != "/runner/.local/bin" ]; then
+                echo "::error::runner-manifest path_policy.runner_local_bin.path expected '/runner/.local/bin', got '${runner_local_bin_path:-<missing>}'."
+                exit 1
+              fi
+
+              runner_local_bin_state="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.state // ""')"
+              if [ "$runner_local_bin_state" != "directory" ]; then
+                echo "::error::runner-manifest path_policy.runner_local_bin.state expected 'directory', got '${runner_local_bin_state:-<missing>}'."
+                exit 1
+              fi
+
+              if ! printf '%s' "$runner_entry" | jq -e '.path_policy.runner_local_bin.in_path == true' >/dev/null; then
+                runner_local_bin_in_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.in_path // false')"
+                echo "::error::runner-manifest path_policy.runner_local_bin.in_path expected boolean true, got '${runner_local_bin_in_path}'."
+                exit 1
+              fi
+            fi
+
+            manifest_capabilities="$RUNNER_CAPABILITIES"
+            if [ "$TOOL_MODE" = runner-preinstalled ]; then
+              manifest_capabilities="${manifest_capabilities}${manifest_capabilities:+ }lychee"
+            fi
+
+            for capability in $manifest_capabilities; do
+              tool_status="$(printf '%s' "$runner_entry" | jq -r --arg name "$capability" '([.tools[]? | select(.name == $name)] | first | .observed.status) // "missing-tool-entry"')"
+              if [ "$tool_status" != "present" ]; then
+                echo "::error::runner-manifest tools.${capability}.observed.status expected 'present', got '${tool_status}'."
+                exit 1
+              fi
+
+              tool_version="$(printf '%s' "$runner_entry" | jq -r --arg name "$capability" '([.tools[]? | select(.name == $name)] | first | .observed.version) // ""')"
+              if [ -z "$tool_version" ]; then
+                echo "::error::runner-manifest tools.${capability}.observed.version expected a non-empty version."
+                exit 1
+              fi
+            done
+          }
+
+          for capability in $RUNNER_CAPABILITIES; do
+            case "$capability" in
+              gh|ruby|brew|make|lychee)
+                if ! command -v "$capability" >/dev/null 2>&1; then
+                  echo "::error::runner-capabilities requested '${capability}', but command '${capability}' was not found."
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make, lychee."
+                exit 1
+                ;;
+            esac
+          done
+
+          if [ "$TOOL_MODE" = runner-preinstalled ] && ! command -v lychee >/dev/null 2>&1; then
+            echo "::error::tool-mode runner-preinstalled requires lychee on PATH."
+            exit 1
+          fi
+
+          validate_runner_manifest
+
+          echo "Runner contract OK: profile='${RUNNER_PROFILE:-<none>}' capabilities='${RUNNER_CAPABILITIES:-<none>}' tool-mode='${TOOL_MODE}' os='${OBSERVED_RUNNER_OS}' arch='${OBSERVED_RUNNER_ARCH}'."
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Ensure GitHub CLI
+        shell: sh
+        env:
+          GH_CLI_VERSION: "2.93.0"
+        run: |
+          set -eu
+
+          if command -v gh >/dev/null 2>&1; then
+            echo "GitHub CLI already available: $(gh --version | head -n 1)"
+            exit 0
+          fi
+
+          os="$(uname -s)"
+          arch="$(uname -m)"
+          temp_root="${RUNNER_TEMP:-/tmp}"
+          tools_dir="${temp_root}/wiki-ci-bin"
+          mkdir -p "$tools_dir"
+
+          install_linux_tarball() {
+            asset_arch="$1"
+            archive="gh_${GH_CLI_VERSION}_linux_${asset_arch}.tar.gz"
+            extract_dir="${temp_root}/gh_${GH_CLI_VERSION}_linux_${asset_arch}"
+
+            curl -fsSL \
+              "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/${archive}" \
+              -o "${temp_root}/${archive}"
+            tar -xzf "${temp_root}/${archive}" -C "$temp_root"
+            cp "${extract_dir}/bin/gh" "${tools_dir}/gh"
+            chmod 0755 "${tools_dir}/gh"
+          }
+
+          case "${os}:${arch}" in
+            Linux:aarch64|Linux:arm64)
+              install_linux_tarball arm64
+              ;;
+            Linux:x86_64|Linux:amd64)
+              install_linux_tarball amd64
+              ;;
+            Darwin:*)
+              if command -v brew >/dev/null 2>&1; then
+                brew install gh
+                exit 0
+              fi
+              echo "::error::GitHub CLI is missing and automatic install is only supported for Linux tarballs or macOS runners with Homebrew."
+              exit 1
+              ;;
+            *)
+              echo "::error::GitHub CLI is missing and automatic install does not support ${os}/${arch}."
+              exit 1
+              ;;
+          esac
+
+          if [ -z "${GITHUB_PATH:-}" ]; then
+            echo "::error::GITHUB_PATH is unavailable; cannot expose installed gh to later steps."
+            exit 1
+          fi
+
+          echo "$tools_dir" >> "$GITHUB_PATH"
+          "${tools_dir}/gh" --version | head -n 1
+
+      - name: Approval report
+        id: approval_report
+        if: ${{ inputs['approval-report'] && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          ALLOWED_LABELS: ${{ inputs['approval-labels'] }}
+        run: |
+          set -eu
+
+          temp_root="${RUNNER_TEMP:-/tmp}"
+          mkdir -p "$temp_root"
+          workdir="$(mktemp -d "${temp_root}/wiki-approval-report.XXXXXX")"
+          trap 'rm -rf "$workdir"' EXIT INT TERM
+
+          allowed_file="$workdir/allowed-labels.txt"
+          live_labels_file="$workdir/live-labels.txt"
+          matched_labels_file="$workdir/matched-labels.txt"
+          ignored_approval_labels_file="$workdir/ignored-approval-labels.txt"
+          latest_reviews_file="$workdir/latest-reviews.tsv"
+          approved_reviewers_file="$workdir/approved-reviewers.txt"
+          : > "$allowed_file"
+          : > "$live_labels_file"
+          : > "$matched_labels_file"
+          : > "$ignored_approval_labels_file"
+          : > "$latest_reviews_file"
+          : > "$approved_reviewers_file"
+
+          is_approval_label() {
+            printf '%s\n' "$1" | grep -Eq '^approved\[[A-Za-z0-9._-]+\]$'
+          }
+
+          join_file() {
+            awk '
+              BEGIN { first = 1 }
+              {
+                if (!first) {
+                  printf ", "
+                }
+                printf "%s", $0
+                first = 0
+              }
+              END {
+                if (first) {
+                  printf "none"
+                }
+                printf "\n"
+              }
+            ' "$1"
+          }
+
+          printf '%s\n' "$ALLOWED_LABELS" |
+            tr ',' '\n' |
+            sed 's/^[[:space:]]*//' |
+            sed 's/[[:space:]]*$//' |
+            sed '/^$/d' |
+            sort -u > "$allowed_file"
+
+          if [ ! -s "$allowed_file" ]; then
+            echo "::error::approval-labels must contain at least one label."
+            exit 1
+          fi
+
+          while IFS= read -r allowed_label; do
+            if ! is_approval_label "$allowed_label"; then
+              echo "::error::allowed approval label '${allowed_label}' must match approved[<approver-id>]."
+              exit 1
+            fi
+          done < "$allowed_file"
+
+          if [ -z "${PULL_REQUEST_NUMBER:-}" ]; then
+            echo "signal=skipped" >> "$GITHUB_OUTPUT"
+            echo "Approval report skipped outside pull request context."
+            exit 0
+          fi
+
+          gh api "repos/${REPOSITORY}/issues/${PULL_REQUEST_NUMBER}/labels" \
+            --paginate \
+            --jq '.[].name' > "$live_labels_file"
+
+          while IFS= read -r live_label; do
+            if grep -Fx "$live_label" "$allowed_file" >/dev/null; then
+              printf '%s\n' "$live_label" >> "$matched_labels_file"
+            elif is_approval_label "$live_label"; then
+              printf '%s\n' "$live_label" >> "$ignored_approval_labels_file"
+            fi
+          done < "$live_labels_file"
+
+          gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/reviews" \
+            --paginate \
+            --jq '.[] | [.user.login, .state] | @tsv' |
+            awk -F "$(printf '\t')" '
+              NF >= 2 { latest[$1] = $2 }
+              END {
+                for (reviewer in latest) {
+                  print reviewer "\t" latest[reviewer]
+                }
+              }
+            ' > "$latest_reviews_file"
+
+          awk -F "$(printf '\t')" '$2 == "APPROVED" { print $1 }' "$latest_reviews_file" |
+            sort -u > "$approved_reviewers_file"
+
+          if [ -s "$matched_labels_file" ] || [ -s "$approved_reviewers_file" ]; then
+            echo "signal=present" >> "$GITHUB_OUTPUT"
+            echo "Approval report found approval signal."
+            echo "Approved reviewers: $(join_file "$approved_reviewers_file")"
+            echo "Approved labels: $(join_file "$matched_labels_file")"
+            exit 0
+          fi
+
+          echo "signal=missing" >> "$GITHUB_OUTPUT"
+          echo "::notice::approval report found no merge approval signal; CI remains healthy."
+          echo "Agency merge authority must block merge until a review record or approved[...] label exists."
+          if [ -s "$ignored_approval_labels_file" ]; then
+            echo "Ignored approval labels: $(join_file "$ignored_approval_labels_file")"
+          fi
+          exit 0
+
+      - name: Check PR title
+        id: pr_title
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          title="$EVENT_PR_TITLE"
+          if [[ -n "$PR_NUMBER" ]]; then
+            current_title="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.title' 2>/dev/null || true)"
+            if [[ -n "$current_title" ]]; then
+              title="$current_title"
+            fi
+          fi
+
+          if [[ ! "$title" =~ ^(feat|fix|chore|docs|refactor|test|ci)(\(.+\))?:[[:space:]].+ ]]; then
+            echo "::error::PR title must follow Conventional Commits format. Got: $title"
+            exit 1
+          fi
+
+          echo "PR title OK: $title"
+
+      - name: Scan workflow runner routing
+        id: hosted_drift
+        env:
+          MODE: ${{ inputs['hosted-drift-mode'] }}
+          ALLOWLIST_PATH: ${{ inputs['hosted-drift-allowlist-path'] }}
+        run: |
+          set -eu
+
+          case "$MODE" in
+            report|enforce) ;;
+            *)
+              echo "::error::Unknown hosted-drift-mode '${MODE}'. Expected report or enforce."
+              exit 1
+              ;;
+          esac
+
+          temp_root="${RUNNER_TEMP:-/tmp}"
+          mkdir -p "$temp_root"
+          workdir="$(mktemp -d "${temp_root}/wiki-hosted-drift.XXXXXX")"
+          hosted="$workdir/hosted.tsv"
+          approved="$workdir/approved.tsv"
+          unapproved="$workdir/unapproved.tsv"
+          puck="$workdir/puck.tsv"
+          unknown="$workdir/unknown.tsv"
+          invalid_allowlist="$workdir/invalid-allowlist.tsv"
+          : > "$hosted"
+          : > "$approved"
+          : > "$unapproved"
+          : > "$puck"
+          : > "$unknown"
+          : > "$invalid_allowlist"
+
+          classify_line() {
+            file="$1"
+            line="$2"
+            job="$3"
+            runner="$4"
+            text="$5"
+            target="$unknown"
+
+            case "$runner" in
+              ubuntu-latest|macos-latest|windows-latest) target="$hosted" ;;
+              *puck*|*self-hosted*) target="$puck" ;;
+              expression|unknown) target="$unknown" ;;
+            esac
+
+            printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "$job" "$runner" "$text" >> "$target"
+          }
+
+          scan_file() {
+            file="$1"
+            awk '
+              function trim(value) {
+                sub(/^[[:space:]]+/, "", value)
+                sub(/[[:space:]]+$/, "", value)
+                return value
+              }
+              /^jobs:[[:space:]]*$/ { in_jobs=1; job=""; next }
+              in_jobs && /^[^[:space:]][^:]*:/ { in_jobs=0; job="" }
+              in_jobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ {
+                job=trim($0)
+                sub(/:$/, "", job)
+              }
+              /^[[:space:]]*runs-on:[[:space:]]*/ {
+                text=$0
+                runner="unknown"
+                if (text ~ /ubuntu-latest/) runner="ubuntu-latest"
+                else if (text ~ /macos-latest/) runner="macos-latest"
+                else if (text ~ /windows-latest/) runner="windows-latest"
+                else if (text ~ /(self-hosted|puck)/) runner="self-hosted"
+                else if (text ~ /\$\{\{/) runner="expression"
+                print FNR "\t" job "\t" runner "\t" text
+              }
+              /uses:[[:space:]]*e0da\/actions\/\.github\/workflows\/[^[:space:]]+\.yml@/ {
+                print FNR "\t" job "\treusable\t" $0
+              }
+            ' "$file" |
+              while IFS="$(printf '\t')" read -r line job runner text; do
+                if [ "$runner" = reusable ]; then
+                  window="$(tail -n +"$line" "$file" | sed -n '1,30p')"
+                  runner_input="$(printf '%s\n' "$window" | sed -n 's/^[[:space:]]*[a-zA-Z0-9_-]*runner:[[:space:]]*//p' | sed -n '1p')"
+                  if [ -z "$runner_input" ]; then
+                    runner_input="ubuntu-latest"
+                  elif printf '%s\n' "$runner_input" | grep -Eq '^\$\{\{'; then
+                    runner_input="expression"
+                  fi
+                  classify_line "$file" "$line" "$job" "$runner_input" "$text"
+                else
+                  classify_line "$file" "$line" "$job" "$runner" "$text"
+                fi
+              done
+          }
+
+          if [ -f "$ALLOWLIST_PATH" ]; then
+            awk -v today="$(date -u +%F)" '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                fields=split($0, parts, "\t")
+                if (fields < 6 || parts[4] !~ /^E0D-[0-9]+$/ || parts[5] !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ || parts[5] < today) {
+                  print $0
+                }
+              }
+            ' "$ALLOWLIST_PATH" > "$invalid_allowlist"
+          fi
+
+          if [ -d .github/workflows ]; then
+            find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | sort |
+              while IFS= read -r file; do
+                scan_file "$file"
+              done
+          fi
+
+          if [ -s "$ALLOWLIST_PATH" ]; then
+            while IFS="$(printf '\t')" read -r file line job runner text; do
+              if awk -F "$(printf '\t')" -v f="$file" -v j="$job" -v r="$runner" '
+                $1 == f && ($2 == "*" || $2 == j) && $3 == r { found=1 }
+                END { exit(found ? 0 : 1) }
+              ' "$ALLOWLIST_PATH"; then
+                printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "$job" "$runner" "$text" >> "$approved"
+              else
+                printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "$job" "$runner" "$text" >> "$unapproved"
+              fi
+            done < "$hosted"
+          else
+            cp "$hosted" "$unapproved"
+          fi
+
+          {
+            echo "## Hosted Runner Drift"
+            echo
+            echo "| Finding | Count |"
+            echo "| --- | ---: |"
+            echo "| Approved hosted findings | $(wc -l < "$approved" | tr -d ' ') |"
+            echo "| Unapproved hosted findings | $(wc -l < "$unapproved" | tr -d ' ') |"
+            echo "| Puck/self-hosted findings | $(wc -l < "$puck" | tr -d ' ') |"
+            echo "| Unknown findings | $(wc -l < "$unknown" | tr -d ' ') |"
+            echo "| Invalid allowlist entries | $(wc -l < "$invalid_allowlist" | tr -d ' ') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$MODE" = enforce ] && [ -s "$invalid_allowlist" ]; then
+            echo "::error::mode=enforce failed because invalid allowlist entries were found."
+            exit 1
+          fi
+
+          if [ "$MODE" = enforce ] && [ -s "$unapproved" ]; then
+            echo "::error::mode=enforce failed because unapproved hosted runner findings were found."
+            exit 1
+          fi
+
+          if [ -s "$unknown" ]; then
+            echo "::notice::Unknown runner findings were reported. They are visible but non-blocking."
+          fi
+
+      - name: Install Gitleaks CLI
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+
+          case "${RUNNER_OS}_${RUNNER_ARCH}" in
+            Linux_X64)
+              asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+              sha256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+              ;;
+            Linux_ARM64)
+              asset="gitleaks_${GITLEAKS_VERSION}_linux_arm64.tar.gz"
+              sha256="e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"
+              ;;
+            macOS_X64)
+              asset="gitleaks_${GITLEAKS_VERSION}_darwin_x64.tar.gz"
+              sha256="dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"
+              ;;
+            macOS_ARM64)
+              asset="gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
+              sha256="b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
+              ;;
+            *)
+              echo "unsupported runner for Gitleaks CLI install: ${RUNNER_OS}_${RUNNER_ARCH}" >&2
+              exit 1
+              ;;
+          esac
+
+          archive_path="${RUNNER_TEMP}/${asset}"
+          install_dir="${RUNNER_TEMP}/gitleaks-bin"
+          curl --fail --silent --show-error --location \
+            --output "$archive_path" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          echo "${sha256}  ${archive_path}" | shasum -a 256 --check
+          mkdir -p "$install_dir"
+          tar -xzf "$archive_path" -C "$install_dir" gitleaks
+          chmod +x "${install_dir}/gitleaks"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Secret scan
+        id: secret_scan
+        continue-on-error: true
+        run: gitleaks detect --source . --verbose --redact
+
+      - name: Check links
+        id: link_check_linux_install
+        if: runner.os == 'Linux' && inputs['tool-mode'] == 'workflow-install'
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: ${{ inputs['link-args'] }}
+          failIfEmpty: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check links with preinstalled lychee
+        id: link_check_linux_preinstalled
+        if: runner.os == 'Linux' && inputs['tool-mode'] == 'runner-preinstalled'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LYCHEE_ARGS: ${{ inputs['link-args'] }}
+        run: bash -lc "lychee ${LYCHEE_ARGS}"
+
+      - name: Install lychee
+        if: runner.os == 'macOS' && inputs['tool-mode'] == 'workflow-install'
+        run: |
+          if command -v lychee >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "Homebrew is required to install lychee on macOS self-hosted runners."
+            exit 1
+          fi
+
+          brew install lychee
+
+      - name: Check links
+        id: link_check_macos
+        if: runner.os == 'macOS'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LYCHEE_ARGS: ${{ inputs['link-args'] }}
+        run: bash -lc "lychee ${LYCHEE_ARGS}"
+
+      - name: Set up Ruby
+        if: runner.os != 'macOS'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ inputs['ruby-version'] }}
+          bundler-cache: true
+
+      - name: Set up Ruby
+        if: runner.os == 'macOS'
+        env:
+          RUBY_VERSION: ${{ inputs['ruby-version'] }}
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "Homebrew is required to install Ruby on macOS self-hosted runners."
+            exit 1
+          fi
+
+          ruby_series="$(printf '%s\n' "$RUBY_VERSION" | awk -F. '{ print $1 "." $2 }')"
+          ruby_formula="ruby@${ruby_series}"
+
+          if ! brew info "$ruby_formula" >/dev/null 2>&1; then
+            echo "Homebrew formula ${ruby_formula} is unavailable."
+            exit 1
+          fi
+
+          if ! brew list "$ruby_formula" >/dev/null 2>&1; then
+            brew install "$ruby_formula"
+          fi
+
+          ruby_prefix="$(brew --prefix "$ruby_formula")"
+          echo "${ruby_prefix}/bin" >> "$GITHUB_PATH"
+          export PATH="${ruby_prefix}/bin:$PATH"
+
+          ruby --version
+          gem install bundler --no-document
+          bundle config set --local path "$RUNNER_TEMP/bundle"
+          bundle install --jobs 4 --retry 3
+
+      - name: Validate YAML frontmatter in .md files
+        id: frontmatter
+        run: |
+          ruby <<'RB'
+          require "date"
+          require "yaml"
+
+          files = `git ls-files "*.md"`.split("\n")
+          failed = false
+
+          files.each do |path|
+            content = File.read(path, encoding: "UTF-8")
+            next unless content.start_with?("---\n")
+
+            match = content.match(/\A---\R(.*?)\R---\R/m)
+            unless match && !match[1].strip.empty?
+              warn "ERROR #{path}: Unclosed or empty frontmatter block"
+              failed = true
+              next
+            end
+
+            begin
+              YAML.safe_load(match[1], permitted_classes: [Date, Time], aliases: true)
+            rescue Psych::Exception => error
+              warn "ERROR #{path}: Invalid YAML frontmatter: #{error.message}"
+              failed = true
+            else
+              puts "OK #{path}"
+            end
+          end
+
+          exit(failed ? 1 : 0)
+          RB
+
+      - name: Install ripgrep
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo_cmd=""
+            if command -v sudo >/dev/null 2>&1; then
+              sudo_cmd="sudo"
+            fi
+
+            case "$(uname -s)" in
+              Darwin)
+                if ! command -v brew >/dev/null 2>&1; then
+                  echo "Homebrew is required to install ripgrep on macOS self-hosted runners."
+                  exit 1
+                fi
+                brew install ripgrep
+                ;;
+              Linux)
+                if command -v apt-get >/dev/null 2>&1; then
+                  $sudo_cmd apt-get update
+                  $sudo_cmd apt-get install -y ripgrep
+                elif command -v apk >/dev/null 2>&1; then
+                  $sudo_cmd apk add --no-cache ripgrep
+                else
+                  echo "No supported package manager found for ripgrep."
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "No supported ripgrep install path for $(uname -s)."
+                exit 1
+                ;;
+            esac
+          fi
+
+      - name: Build
+        id: build
+        env:
+          BUILD_COMMAND: ${{ inputs['build-command'] }}
+        run: bash -c "$BUILD_COMMAND"
+
+      - name: Test
+        id: wiki_test
+        env:
+          TEST_COMMAND: ${{ inputs['test-command'] }}
+        run: |
+          if [ -z "$TEST_COMMAND" ]; then
+            echo "No test command configured."
+            exit 0
+          fi
+
+          bash -c "$TEST_COMMAND"
+
+      - name: Write check summary
+        if: always()
+        env:
+          APPROVAL_OUTCOME: ${{ steps.approval_report.outcome }}
+          APPROVAL_SIGNAL: ${{ steps.approval_report.outputs.signal }}
+          PR_TITLE_OUTCOME: ${{ steps.pr_title.outcome }}
+          HOSTED_DRIFT_OUTCOME: ${{ steps.hosted_drift.outcome }}
+          SECRET_SCAN_OUTCOME: ${{ steps.secret_scan.outcome }}
+          SECRET_SCAN_CONCLUSION: ${{ steps.secret_scan.conclusion }}
+          LINK_LINUX_INSTALL_OUTCOME: ${{ steps.link_check_linux_install.outcome }}
+          LINK_LINUX_PREINSTALLED_OUTCOME: ${{ steps.link_check_linux_preinstalled.outcome }}
+          LINK_MACOS_OUTCOME: ${{ steps.link_check_macos.outcome }}
+          FRONTMATTER_OUTCOME: ${{ steps.frontmatter.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TEST_OUTCOME: ${{ steps.wiki_test.outcome }}
+        run: |
+          set -eu
+
+          normalize_status() {
+            outcome="$1"
+            if [ -z "$outcome" ] || [ "$outcome" = skipped ]; then
+              printf 'skipped\n'
+            elif [ "$outcome" = success ]; then
+              printf 'pass\n'
+            else
+              printf 'fail\n'
+            fi
+          }
+
+          approval_status() {
+            case "${APPROVAL_SIGNAL:-}" in
+              present) printf 'pass\n' ;;
+              missing) printf 'advisory\n' ;;
+              skipped|"") normalize_status "${APPROVAL_OUTCOME:-}" ;;
+              *) normalize_status "${APPROVAL_OUTCOME:-}" ;;
+            esac
+          }
+
+          secret_scan_status() {
+            if [ "${SECRET_SCAN_OUTCOME:-}" = failure ] && [ "${SECRET_SCAN_CONCLUSION:-}" = success ]; then
+              printf 'advisory\n'
+              return
+            fi
+
+            normalize_status "${SECRET_SCAN_OUTCOME:-}"
+          }
+
+          link_status() {
+            for outcome in "${LINK_LINUX_INSTALL_OUTCOME:-}" "${LINK_LINUX_PREINSTALLED_OUTCOME:-}" "${LINK_MACOS_OUTCOME:-}"; do
+              case "$outcome" in
+                failure|cancelled)
+                  printf 'fail\n'
+                  return
+                  ;;
+                success)
+                  printf 'pass\n'
+                  return
+                  ;;
+              esac
+            done
+
+            printf 'skipped\n'
+          }
+
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## Wiki CI Summary"
+              echo
+              echo "| Check | Status |"
+              echo "| --- | --- |"
+              echo "| Approval | $(approval_status) |"
+              echo "| Hosted drift | $(normalize_status "${HOSTED_DRIFT_OUTCOME:-}") |"
+              echo "| PR title | $(normalize_status "${PR_TITLE_OUTCOME:-}") |"
+              echo "| Secret scan | $(secret_scan_status) |"
+              echo "| Broken links | $(link_status) |"
+              echo "| Frontmatter | $(normalize_status "${FRONTMATTER_OUTCOME:-}") |"
+              echo "| Jekyll build | $(normalize_status "${BUILD_OUTCOME:-}") |"
+              echo "| IA test | $(normalize_status "${TEST_OUTCOME:-}") |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
