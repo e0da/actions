@@ -70,7 +70,7 @@ on:
 jobs:
   deploy:
     name: Deploy ${{ inputs.service }}
-    runs-on: [self-hosted, puck]
+    runs-on: [self-hosted, puck, puck-macos-arm64]
     permissions:
       contents: read
       packages: read

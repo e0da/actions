@@ -2,4 +2,5 @@ self-hosted-runner:
   labels:
     - puck
     - puck-linux-arm64
+    - puck-macos-arm64
     - actions-linux-arm64
