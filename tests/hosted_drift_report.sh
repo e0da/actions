@@ -184,4 +184,32 @@ expect_success reusable_allowlisted_enforce "$repo" enforce
 assert_summary reusable_allowlisted_enforce "| Approved hosted findings | 1 |"
 assert_summary reusable_allowlisted_enforce "| Unapproved hosted findings | 0 |"
 
+repo="$(make_repo reusable-arc-scale-set)"
+cat > "$repo/.github/workflows/ci.yml" <<'YAML'
+name: CI
+on: [pull_request]
+jobs:
+  baseline:
+    uses: e0da/actions/.github/workflows/ci-baseline.yml@main
+    with:
+      runner: ops-linux-arm64
+YAML
+expect_success reusable_arc_scale_set_enforce "$repo" enforce
+assert_summary reusable_arc_scale_set_enforce "| Unapproved hosted findings | 0 |"
+assert_summary reusable_arc_scale_set_enforce "| Puck/self-hosted findings | 1 |"
+
+repo="$(make_repo direct-arc-scale-set)"
+cat > "$repo/.github/workflows/ci.yml" <<'YAML'
+name: CI
+on: [pull_request]
+jobs:
+  publish:
+    runs-on: ops-linux-arm64
+    steps:
+      - run: true
+YAML
+expect_success direct_arc_scale_set_enforce "$repo" enforce
+assert_summary direct_arc_scale_set_enforce "| Unapproved hosted findings | 0 |"
+assert_summary direct_arc_scale_set_enforce "| Puck/self-hosted findings | 1 |"
+
 echo "hosted drift report fixtures ok"

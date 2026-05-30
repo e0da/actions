@@ -133,7 +133,7 @@ jobs:
                   else if (text ~ /macos-latest/) runner="macos-latest"
                   else if (text ~ /windows-latest/) runner="windows-latest"
                   print FNR "\t" job "\thosted\t" runner "\tdirect hosted runs-on\t" text
-                } else if (text ~ /(self-hosted|puck)/) {
+                } else if (text ~ /(self-hosted|puck|(^|[^A-Za-z0-9_-])([A-Za-z0-9_-]+-)?linux-arm64([^A-Za-z0-9_-]|$))/) {
                   print FNR "\t" job "\tpuck\tself-hosted\tdirect Puck/self-hosted runs-on\t" text
                 } else if (text ~ /\$\{\{/) {
                   print FNR "\t" job "\tunknown\texpression\texpression runs-on\t" text
@@ -195,7 +195,7 @@ jobs:
                     ;;
                 esac
 
-                if [ -n "$runner_input" ] && printf '%s\n' "$runner_input" | grep -Eq '^(puck|.*self-hosted)'; then
+                if [ -n "$runner_input" ] && printf '%s\n' "$runner_input" | grep -Eq '^(puck|.*self-hosted|([A-Za-z0-9_-]+-)?linux-arm64)$'; then
                   emit puck "$file" "$line" "$job" "$runner_input" "reusable call passes Puck/self-hosted runner input" "$text"
                 elif [ -n "$runner_input" ] && printf '%s\n' "$runner_input" | grep -Eq '^(ubuntu-latest|macos-latest|windows-latest)'; then
                   emit hosted "$file" "$line" "$job" "$(extract_hosted_runner "$runner_input")" "reusable call passes hosted runner input" "$text"
