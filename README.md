@@ -12,11 +12,11 @@ exercise hosted-drift and runner-manifest behavior. The other `ci-*`,
 `deploy-*`, and `release-*` workflow files remain reusable caller contracts; this
 workflow is the source-repo gate for changes to those contracts.
 
-### `puck-linux-arm64-smoke.yml` — Manual runner proof
+### `actions-linux-arm64-smoke.yml` — Manual Actions ARC runner proof
 
-Manual `workflow_dispatch` smoke test for the `puck-linux-arm64` self-hosted
-runner lane. It verifies host identity, Docker socket access, and Linux ARM64
-container execution.
+Manual `workflow_dispatch` smoke test for the `actions-linux-arm64` ARC scale
+set runner lane. It verifies host identity, Docker socket access, and Linux
+ARM64 container execution.
 
 ### `ci-baseline.yml` — All repos
 

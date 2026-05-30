@@ -1,12 +1,12 @@
-name: Puck Linux ARM64 Smoke
+name: Actions Linux ARM64 ARC Smoke
 
 on:
   workflow_dispatch:
 
 jobs:
   smoke:
-    name: Puck Linux ARM64
-    runs-on: [self-hosted, puck-linux-arm64]
+    name: Actions Linux ARM64 ARC
+    runs-on: actions-linux-arm64
     timeout-minutes: 10
     permissions:
       contents: read
