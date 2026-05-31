@@ -156,7 +156,8 @@ Default targets stay compatible with existing callers:
 Callers can include `aarch64-unknown-linux-musl` in `targets` to build a native
 Linux ARM64 musl artifact on the `linux-arm64-runner`, which defaults to
 `puck-linux-arm64`. The workflow supports Debian/Ubuntu (`apt-get`) and Alpine
-(`apk`) musl setup on Linux runners.
+(`apk`) musl setup on Linux runners. The build matrix is generated from
+`targets`, so unrequested platforms do not allocate a runner just to skip.
 
 Runner override inputs:
 

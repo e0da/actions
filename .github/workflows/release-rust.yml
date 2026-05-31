@@ -53,6 +53,7 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      build-matrix: ${{ steps.meta.outputs.build-matrix }}
     permissions:
       contents: read
 
@@ -91,6 +92,9 @@ jobs:
         shell: sh
         env:
           CARGO_PACKAGE: ${{ inputs.cargo-package }}
+          TARGETS: ${{ inputs.targets }}
+          LINUX_ARM64_RUNNER: ${{ inputs.linux-arm64-runner }}
+          LINUX_X64_RUNNER: ${{ inputs.linux-x64-runner }}
         run: |
           set -eu
           tag="${GITHUB_REF_NAME}"
@@ -117,10 +121,66 @@ jobs:
             *-*) prerelease=true ;;
           esac
 
+          normalized_targets="$(printf '%s' "$TARGETS" | tr -d '[:space:]')"
+          old_ifs=$IFS
+          IFS=,
+          for target in $normalized_targets; do
+            case "$target" in
+              aarch64-apple-darwin|aarch64-unknown-linux-musl|x86_64-unknown-linux-musl|"") ;;
+              *)
+                echo "unsupported release target: ${target}" >&2
+                exit 1
+                ;;
+            esac
+          done
+          IFS=$old_ifs
+
+          json_escape() {
+            printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+          }
+
+          matrix_json='{"include":['
+          matrix_sep=
+          matrix_count=0
+          add_target() {
+            matrix_target="$1"
+            matrix_os="$2"
+            matrix_json="${matrix_json}${matrix_sep}{\"target\":\"${matrix_target}\",\"os\":${matrix_os}}"
+            matrix_sep=,
+            matrix_count=$((matrix_count + 1))
+          }
+
+          requested_targets=",${normalized_targets},"
+          case "$requested_targets" in
+            *,aarch64-apple-darwin,*)
+              add_target "aarch64-apple-darwin" '["self-hosted","macos","ARM64"]'
+              ;;
+          esac
+          case "$requested_targets" in
+            *,aarch64-unknown-linux-musl,*)
+              escaped_runner="$(json_escape "$LINUX_ARM64_RUNNER")"
+              add_target "aarch64-unknown-linux-musl" "\"${escaped_runner}\""
+              ;;
+          esac
+          case "$requested_targets" in
+            *,x86_64-unknown-linux-musl,*)
+              escaped_runner="$(json_escape "$LINUX_X64_RUNNER")"
+              add_target "x86_64-unknown-linux-musl" "\"${escaped_runner}\""
+              ;;
+          esac
+
+          if [ "$matrix_count" -eq 0 ]; then
+            echo "at least one release target is required" >&2
+            exit 1
+          fi
+
+          build_matrix="${matrix_json}]}"
+
           echo "validated ${tag} -> ${version} (prerelease=${prerelease})"
           {
             echo "version=${version}"
             echo "prerelease=${prerelease}"
+            echo "build-matrix=${build_matrix}"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -131,14 +191,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            os: [self-hosted, macos, ARM64]
-          - target: aarch64-unknown-linux-musl
-            os: ${{ contains(format(',{0},', inputs.targets), ',aarch64-unknown-linux-musl,') && inputs.linux-arm64-runner || inputs.linux-x64-runner }}
-          - target: x86_64-unknown-linux-musl
-            os: ${{ inputs.linux-x64-runner }}
+      matrix: ${{ fromJSON(needs.validate.outputs.build-matrix) }}
 
     runs-on: ${{ matrix.os }}
 
@@ -152,23 +205,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check if target is requested
-        id: check-target
-        shell: sh
-        run: |
-          set -eu
-          requested_targets=",${{ inputs.targets }},"
-          case "$requested_targets" in
-            *",${{ matrix.target }},"*)
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
-
       - name: Install rustup when missing
-        if: steps.check-target.outputs.skip == 'false'
         shell: sh
         run: |
           set -eu
@@ -186,7 +223,6 @@ jobs:
           rustup --version
 
       - name: Install Rust toolchain
-        if: steps.check-target.outputs.skip == 'false'
         shell: sh
         run: |
           set -eu
@@ -196,7 +232,7 @@ jobs:
           rustup default stable
 
       - name: Add musl toolchain (Linux)
-        if: steps.check-target.outputs.skip == 'false' && (matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl')
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
         shell: sh
         run: |
           set -eu
@@ -217,13 +253,11 @@ jobs:
           fi
 
       - name: Restore Rust cache
-        if: steps.check-target.outputs.skip == 'false'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: stable-${{ runner.os }}-${{ matrix.target }}
 
       - name: Build release binary
-        if: steps.check-target.outputs.skip == 'false'
         shell: sh
         env:
           CARGO_PACKAGE: ${{ inputs.cargo-package }}
@@ -237,12 +271,11 @@ jobs:
           cargo build --release --locked --target ${{ matrix.target }} "$@"
 
       - name: Smoke test (native targets only)
-        if: steps.check-target.outputs.skip == 'false' && inputs.smoke-command != '' && matrix.target == 'aarch64-apple-darwin' && runner.os == 'macOS'
+        if: inputs.smoke-command != '' && matrix.target == 'aarch64-apple-darwin' && runner.os == 'macOS'
         run: ${{ inputs.smoke-command }}
 
       - name: Package binary
         id: package
-        if: steps.check-target.outputs.skip == 'false'
         shell: sh
         run: |
           set -eu
@@ -262,7 +295,6 @@ jobs:
           echo "archive=${archive}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
-        if: steps.check-target.outputs.skip == 'false'
         uses: actions/upload-artifact@v7
         with:
           name: binary-${{ matrix.target }}
