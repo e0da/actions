@@ -74,3 +74,4 @@ jobs:
           sh tests/actions_self_ci_arc_route.sh
           sh tests/hosted_drift_report.sh
           sh tests/runner_manifest_validation.sh
+          sh tests/rust_workflows_arc_ready.sh

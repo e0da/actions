@@ -6,6 +6,10 @@ on:
       binary-name:
         required: true
         type: string
+      cargo-package:
+        required: false
+        type: string
+        default: ""
       targets:
         required: false
         type: string
@@ -58,37 +62,62 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate tag matches Cargo.toml version
-        id: meta
+      - name: Install rustup when missing
+        shell: sh
         run: |
+          set -eu
+          if command -v rustup >/dev/null 2>&1; then
+            rustup --version
+            exit 0
+          fi
+
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            https://sh.rustup.rs \
+            --output "$RUNNER_TEMP/rustup-init.sh"
+          sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup --version
+
+      - name: Install Rust metadata toolchain
+        shell: sh
+        run: |
+          set -eu
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Validate tag matches Cargo package version
+        id: meta
+        shell: sh
+        env:
+          CARGO_PACKAGE: ${{ inputs.cargo-package }}
+        run: |
+          set -eu
           tag="${GITHUB_REF_NAME}"
-          version="$(python3 - <<'PY'
-          import tomllib
-
-          with open("Cargo.toml", "rb") as handle:
-              manifest = tomllib.load(handle)
-
-          print(manifest["package"]["version"])
-          PY
-          )"
+          if [ -n "$CARGO_PACKAGE" ]; then
+            pkgid="$(cargo pkgid -p "$CARGO_PACKAGE")"
+          else
+            pkgid="$(cargo pkgid)"
+          fi
+          version="${pkgid##*@}"
           expected_tag="v${version}"
 
-          if [[ "$tag" != "$expected_tag" ]]; then
+          if [ "$tag" != "$expected_tag" ]; then
             echo "release tag mismatch: expected ${expected_tag}, got ${tag}" >&2
             exit 1
           fi
 
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-((pre|alpha|beta|rc)\.[0-9]+))?$ ]]; then
+          if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-((pre|alpha|beta|rc)\.[0-9]+))?$'; then
             echo "version is not on a supported release train: ${version}" >&2
             exit 1
           fi
 
           prerelease=false
-          if [[ "$version" == *-* ]]; then
-            prerelease=true
-          fi
+          case "$version" in
+            *-*) prerelease=true ;;
+          esac
 
-          echo "validated ${tag} → ${version} (prerelease=${prerelease})"
+          echo "validated ${tag} -> ${version} (prerelease=${prerelease})"
           {
             echo "version=${version}"
             echo "prerelease=${prerelease}"
@@ -125,17 +154,42 @@ jobs:
 
       - name: Check if target is requested
         id: check-target
+        shell: sh
         run: |
+          set -eu
           requested_targets=",${{ inputs.targets }},"
-          if [[ "$requested_targets" == *",${{ matrix.target }},"* ]]; then
+          case "$requested_targets" in
+            *",${{ matrix.target }},"*)
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          else
+              ;;
+            *)
             echo "skip=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Install rustup when missing
+        if: steps.check-target.outputs.skip == 'false'
+        shell: sh
+        run: |
+          set -eu
+          if command -v rustup >/dev/null 2>&1; then
+            rustup --version
+            exit 0
           fi
+
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            https://sh.rustup.rs \
+            --output "$RUNNER_TEMP/rustup-init.sh"
+          sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup --version
 
       - name: Install Rust toolchain
         if: steps.check-target.outputs.skip == 'false'
+        shell: sh
         run: |
+          set -eu
           rustup toolchain install stable \
             --profile minimal \
             --target ${{ matrix.target }}
@@ -143,8 +197,9 @@ jobs:
 
       - name: Add musl toolchain (Linux)
         if: steps.check-target.outputs.skip == 'false' && (matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl')
+        shell: sh
         run: |
-          set -euo pipefail
+          set -eu
           if command -v sudo >/dev/null 2>&1; then
             sudo_cmd=sudo
           else
@@ -169,7 +224,17 @@ jobs:
 
       - name: Build release binary
         if: steps.check-target.outputs.skip == 'false'
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        shell: sh
+        env:
+          CARGO_PACKAGE: ${{ inputs.cargo-package }}
+        run: |
+          set -eu
+          if [ -n "$CARGO_PACKAGE" ]; then
+            set -- -p "$CARGO_PACKAGE"
+          else
+            set --
+          fi
+          cargo build --release --locked --target ${{ matrix.target }} "$@"
 
       - name: Smoke test (native targets only)
         if: steps.check-target.outputs.skip == 'false' && inputs.smoke-command != '' && matrix.target == 'aarch64-apple-darwin' && runner.os == 'macOS'
@@ -178,8 +243,9 @@ jobs:
       - name: Package binary
         id: package
         if: steps.check-target.outputs.skip == 'false'
-        shell: bash
+        shell: sh
         run: |
+          set -eu
           binary="${{ inputs.binary-name }}"
           target="${{ matrix.target }}"
           version="${{ needs.validate.outputs.version }}"
@@ -187,7 +253,11 @@ jobs:
 
           cp "target/${target}/release/${binary}" "${binary}"
           tar czf "${archive}" "${binary}"
-          shasum -a 256 "${archive}" > "${archive}.sha256"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${archive}" > "${archive}.sha256"
+          else
+            shasum -a 256 "${archive}" > "${archive}.sha256"
+          fi
 
           echo "archive=${archive}" >> "$GITHUB_OUTPUT"
 

@@ -180,6 +180,23 @@ jobs:
           docker logs ci-nats
           exit 1
 
+      - name: Install rustup when missing
+        shell: sh
+        run: |
+          set -eu
+          if command -v rustup >/dev/null 2>&1; then
+            rustup --version
+            exit 0
+          fi
+
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            https://sh.rustup.rs \
+            --output "$RUNNER_TEMP/rustup-init.sh"
+          sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup --version
+
       - name: Install Rust toolchain
         run: |
           rustup toolchain install ${{ inputs.toolchain }} \
