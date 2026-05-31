@@ -135,15 +135,18 @@ snippet to validate requested capabilities before setup runs.
 Runs `cargo fmt`, `cargo clippy`, `cargo nextest`, and `cargo build`.
 
 Callers can override `runner`, the Rust toolchain, feature flags, test args,
-and apt system dependencies. For integration tests that need NATS, callers can
-set `start-nats-jetstream: true` and
+and apt system dependencies. The workflow installs `rustup` when a self-hosted
+runner does not already provide it, then installs the requested toolchain. For
+integration tests that need NATS, callers can set `start-nats-jetstream: true` and
 `nats-test-url: nats://localhost:4222`.
 
 ### `release-rust.yml` — Rust release artifacts
 
 Reusable release workflow for tagged Rust binary releases. It validates the
-release tag against `Cargo.toml`, builds requested target archives, publishes a
-GitHub Release, and can optionally push a GHCR image.
+release tag against a Cargo package version, builds requested target archives,
+publishes a GitHub Release, and can optionally push a GHCR image. Set
+`cargo-package` for virtual workspaces or when the released binary belongs to a
+specific workspace package.
 
 Default targets stay compatible with existing callers:
 
