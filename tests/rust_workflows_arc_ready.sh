@@ -24,6 +24,9 @@ reject_literal() {
 
 require_literal ".github/workflows/ci-rust.yml" "      - name: Install rustup when missing"
 require_literal ".github/workflows/ci-rust.yml" "https://sh.rustup.rs"
+require_literal ".github/workflows/ci-rust.yml" "RUST_TOOLCHAIN: \${{ inputs.toolchain }}"
+require_literal ".github/workflows/ci-rust.yml" "while [ \"\$attempt\" -le 3 ]; do"
+require_literal ".github/workflows/ci-rust.yml" "rustup install attempt \${attempt} failed; retrying in \${sleep_seconds}s"
 
 require_literal ".github/workflows/release-rust.yml" "      cargo-package:"
 require_literal ".github/workflows/release-rust.yml" "      - name: Install rustup when missing"
@@ -32,6 +35,8 @@ require_literal ".github/workflows/release-rust.yml" "build-matrix: \${{ steps.m
 require_literal ".github/workflows/release-rust.yml" "matrix: \${{ fromJSON(needs.validate.outputs.build-matrix) }}"
 require_literal ".github/workflows/release-rust.yml" "unsupported release target:"
 require_literal ".github/workflows/release-rust.yml" "cargo build --release --locked --target \${{ matrix.target }} \"\$@\""
+require_literal ".github/workflows/release-rust.yml" "RUST_TARGET: \${{ matrix.target }}"
+require_literal ".github/workflows/release-rust.yml" "rustup install attempt \${attempt} failed; retrying in \${sleep_seconds}s"
 reject_literal ".github/workflows/release-rust.yml" "      - name: Check if target is requested"
 reject_literal ".github/workflows/release-rust.yml" "python3 - <<'PY'"
 reject_literal ".github/workflows/release-rust.yml" "tomllib"

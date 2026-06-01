@@ -198,11 +198,35 @@ jobs:
           rustup --version
 
       - name: Install Rust toolchain
+        shell: sh
+        env:
+          RUST_TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
-          rustup toolchain install ${{ inputs.toolchain }} \
-            --profile minimal \
-            --component clippy,rustfmt
-          rustup default ${{ inputs.toolchain }}
+          set -eu
+
+          install_rust_toolchain() {
+            rustup toolchain install "$RUST_TOOLCHAIN" \
+              --profile minimal \
+              --component clippy,rustfmt
+          }
+
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            if install_rust_toolchain; then
+              rustup default "$RUST_TOOLCHAIN"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              printf '%s\n' "rustup install failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 15))
+            printf '%s\n' "rustup install attempt ${attempt} failed; retrying in ${sleep_seconds}s" >&2
+            sleep "$sleep_seconds"
+            attempt=$((attempt + 1))
+          done
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2

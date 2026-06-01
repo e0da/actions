@@ -82,10 +82,32 @@ jobs:
 
       - name: Install Rust metadata toolchain
         shell: sh
+        env:
+          RUST_TOOLCHAIN: stable
         run: |
           set -eu
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+
+          install_rust_toolchain() {
+            rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          }
+
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            if install_rust_toolchain; then
+              rustup default "$RUST_TOOLCHAIN"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              printf '%s\n' "rustup install failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 15))
+            printf '%s\n' "rustup install attempt ${attempt} failed; retrying in ${sleep_seconds}s" >&2
+            sleep "$sleep_seconds"
+            attempt=$((attempt + 1))
+          done
 
       - name: Validate tag matches Cargo package version
         id: meta
@@ -224,12 +246,35 @@ jobs:
 
       - name: Install Rust toolchain
         shell: sh
+        env:
+          RUST_TOOLCHAIN: stable
+          RUST_TARGET: ${{ matrix.target }}
         run: |
           set -eu
-          rustup toolchain install stable \
-            --profile minimal \
-            --target ${{ matrix.target }}
-          rustup default stable
+
+          install_rust_toolchain() {
+            rustup toolchain install "$RUST_TOOLCHAIN" \
+              --profile minimal \
+              --target "$RUST_TARGET"
+          }
+
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            if install_rust_toolchain; then
+              rustup default "$RUST_TOOLCHAIN"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              printf '%s\n' "rustup install failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 15))
+            printf '%s\n' "rustup install attempt ${attempt} failed; retrying in ${sleep_seconds}s" >&2
+            sleep "$sleep_seconds"
+            attempt=$((attempt + 1))
+          done
 
       - name: Add musl toolchain (Linux)
         if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
