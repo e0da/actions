@@ -1,0 +1,270 @@
+name: Release Homebrew Interface
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "Runner for release-interface build and package proof."
+        required: false
+        type: string
+        default: macos-14
+      install-runner:
+        description: "Runner for Homebrew installed proof."
+        required: false
+        type: string
+        default: macos-14
+      release-interface:
+        description: "App-owned release interface script."
+        required: false
+        type: string
+        default: scripts/release-interface
+      build-output-dir:
+        description: "Directory passed to the release-interface build verb."
+        required: false
+        type: string
+        default: dist/homebrew-interface
+      built-binary-name:
+        description: "Binary name under build-output-dir/bin; defaults to homebrew-formula."
+        required: false
+        type: string
+        default: ""
+      artifact-name:
+        description: "Base name for the uploaded release payload artifact."
+        required: false
+        type: string
+        default: homebrew-interface-payload
+      publish-runner:
+        description: "Runner for GitHub release asset publication."
+        required: false
+        type: string
+        default: ubuntu-latest
+      homebrew-tap:
+        description: "Homebrew tap name used for installed proof."
+        required: false
+        type: string
+        default: e0da/internal
+      homebrew-formula:
+        description: "Formula name; also used as build-output-dir/bin/<formula> for smoke."
+        required: true
+        type: string
+      publish-github-release:
+        description: "Upload the packaged payload and checksum to the current tag release."
+        required: false
+        type: boolean
+        default: false
+      run-homebrew-proof:
+        description: "Run brew fetch, install, and test against the configured tap/formula."
+        required: false
+        type: boolean
+        default: true
+      installed-smoke-command:
+        description: "Optional extra command to run after brew test."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      HOMEBREW_GITHUB_API_TOKEN:
+        required: false
+
+jobs:
+  release-interface:
+    name: Release Interface Proof
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Run release metadata
+        shell: sh
+        env:
+          RELEASE_INTERFACE: ${{ inputs.release-interface }}
+        run: |
+          set -eu
+          [ -f "$RELEASE_INTERFACE" ] || {
+            echo "release interface not found: $RELEASE_INTERFACE" >&2
+            exit 1
+          }
+          sh "$RELEASE_INTERFACE" metadata | tee release-interface-metadata.json
+
+      - name: Validate GitHub release publishing ref
+        if: inputs.publish-github-release && github.ref_type != 'tag'
+        shell: sh
+        run: |
+          set -eu
+          echo "publish-github-release requires a tag ref; got ${GITHUB_REF_TYPE:-unknown}:${GITHUB_REF_NAME}" >&2
+          exit 1
+
+      - name: Run release tests
+        shell: sh
+        env:
+          RELEASE_INTERFACE: ${{ inputs.release-interface }}
+        run: |
+          set -eu
+          sh "$RELEASE_INTERFACE" test
+
+      - name: Build release payload
+        shell: sh
+        env:
+          RELEASE_INTERFACE: ${{ inputs.release-interface }}
+          BUILD_OUTPUT_DIR: ${{ inputs.build-output-dir }}
+        run: |
+          set -eu
+          case "$BUILD_OUTPUT_DIR" in
+            ""|/|.|/*|*..*)
+              echo "unsafe build-output-dir: ${BUILD_OUTPUT_DIR:-<empty>}" >&2
+              exit 2
+              ;;
+          esac
+          rm -rf "$BUILD_OUTPUT_DIR"
+          sh "$RELEASE_INTERFACE" build "$BUILD_OUTPUT_DIR"
+
+      - name: Smoke built payload
+        shell: sh
+        env:
+          RELEASE_INTERFACE: ${{ inputs.release-interface }}
+          BUILD_OUTPUT_DIR: ${{ inputs.build-output-dir }}
+          HOMEBREW_FORMULA: ${{ inputs.homebrew-formula }}
+          BUILT_BINARY_NAME: ${{ inputs.built-binary-name }}
+        run: |
+          set -eu
+          SMOKE_BINARY_NAME="$HOMEBREW_FORMULA"
+          if [ -n "$BUILT_BINARY_NAME" ]; then
+            SMOKE_BINARY_NAME="$BUILT_BINARY_NAME"
+          fi
+          sh "$RELEASE_INTERFACE" smoke "$BUILD_OUTPUT_DIR/bin/$SMOKE_BINARY_NAME"
+
+      - name: Package release payload
+        id: package
+        shell: sh
+        env:
+          BUILD_OUTPUT_DIR: ${{ inputs.build-output-dir }}
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+          HOMEBREW_FORMULA: ${{ inputs.homebrew-formula }}
+        run: |
+          set -eu
+          safe_ref=$(printf '%s' "$GITHUB_REF_NAME" | tr '/:@ ' '----')
+          archive="${ARTIFACT_NAME}-${safe_ref}-${HOMEBREW_FORMULA}.tar.gz"
+          tar -C "$BUILD_OUTPUT_DIR" -czf "$archive" .
+          shasum -a 256 "$archive" > "$archive.sha256"
+          {
+            echo "archive=$archive"
+            echo "checksum=$archive.sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload release-interface artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+            release-interface-metadata.json
+          if-no-files-found: error
+
+  publish-github-release:
+    name: Publish GitHub Release Assets
+    needs: release-interface
+    if: inputs.publish-github-release && github.ref_type == 'tag'
+    runs-on: ${{ inputs.publish-runner }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release-interface artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact-name }}
+
+      - name: Publish GitHub release assets
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          set -- *.tar.gz
+          [ -f "$1" ] || {
+            echo "release artifact tarball not found" >&2
+            exit 1
+          }
+          archive="$1"
+          checksum="$archive.sha256"
+          [ -f "$checksum" ] || {
+            echo "release artifact checksum not found: $checksum" >&2
+            exit 1
+          }
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$archive" "$checksum" --clobber
+            exit 0
+          fi
+
+          set -- --generate-notes
+          case "$GITHUB_REF_NAME" in
+            *-*) set -- "$@" --prerelease --latest=false ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" "$archive" "$checksum" "$@"
+
+  homebrew-proof:
+    name: Homebrew Installed Proof
+    needs: release-interface
+    if: inputs.run-homebrew-proof
+    runs-on: ${{ inputs.install-runner }}
+    permissions:
+      contents: read
+
+    env:
+      CALLER_HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN || github.token }}
+      HOMEBREW_TAP: ${{ inputs.homebrew-tap }}
+      HOMEBREW_FORMULA: ${{ inputs.homebrew-formula }}
+      INSTALLED_SMOKE_COMMAND: ${{ inputs.installed-smoke-command }}
+
+    steps:
+      - name: Validate private tap token
+        shell: sh
+        run: |
+          set -eu
+          if [ "$HOMEBREW_TAP" = "e0da/internal" ] && [ -z "$CALLER_HOMEBREW_GITHUB_API_TOKEN" ]; then
+            echo "HOMEBREW_GITHUB_API_TOKEN secret is required for e0da/internal Homebrew proof." >&2
+            exit 1
+          fi
+
+      - name: Configure private GitHub access
+        shell: sh
+        run: |
+          set -eu
+          git config --global \
+            url."https://x-access-token:${HOMEBREW_GITHUB_API_TOKEN}@github.com/".insteadOf \
+            "https://github.com/"
+
+      - name: Tap and fetch formula
+        shell: sh
+        run: |
+          set -eu
+          brew tap "$HOMEBREW_TAP"
+          brew fetch --force "$HOMEBREW_TAP/$HOMEBREW_FORMULA"
+
+      - name: Install formula
+        shell: sh
+        run: |
+          set -eu
+          brew uninstall --force "$HOMEBREW_TAP/$HOMEBREW_FORMULA" >/dev/null 2>&1 || true
+          brew install "$HOMEBREW_TAP/$HOMEBREW_FORMULA"
+
+      - name: Test formula
+        shell: sh
+        run: |
+          set -eu
+          brew test "$HOMEBREW_TAP/$HOMEBREW_FORMULA"
+
+      - name: Run installed smoke command
+        if: inputs.installed-smoke-command != ''
+        shell: sh
+        run: |
+          set -eu
+          sh -c "$INSTALLED_SMOKE_COMMAND"
