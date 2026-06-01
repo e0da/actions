@@ -204,11 +204,24 @@ jobs:
         run: |
           set -eu
 
+          rust_toolchain_ready() {
+            rustup run "$RUST_TOOLCHAIN" rustc --version >/dev/null 2>&1 || return 1
+            rustup run "$RUST_TOOLCHAIN" cargo --version >/dev/null 2>&1 || return 1
+            rustup run "$RUST_TOOLCHAIN" cargo clippy --version >/dev/null 2>&1 || return 1
+            rustup run "$RUST_TOOLCHAIN" rustfmt --version >/dev/null 2>&1 || return 1
+          }
+
           install_rust_toolchain() {
             rustup toolchain install "$RUST_TOOLCHAIN" \
               --profile minimal \
               --component clippy,rustfmt
           }
+
+          if rust_toolchain_ready; then
+            printf '%s\n' "Using preinstalled Rust toolchain: $RUST_TOOLCHAIN"
+            rustup default "$RUST_TOOLCHAIN"
+            exit 0
+          fi
 
           attempt=1
           while [ "$attempt" -le 3 ]; do

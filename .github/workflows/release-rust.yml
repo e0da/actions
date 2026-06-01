@@ -87,9 +87,20 @@ jobs:
         run: |
           set -eu
 
+          rust_metadata_toolchain_ready() {
+            rustup run "$RUST_TOOLCHAIN" rustc --version >/dev/null 2>&1 || return 1
+            rustup run "$RUST_TOOLCHAIN" cargo --version >/dev/null 2>&1 || return 1
+          }
+
           install_rust_toolchain() {
             rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           }
+
+          if rust_metadata_toolchain_ready; then
+            printf '%s\n' "Using preinstalled Rust metadata toolchain: $RUST_TOOLCHAIN"
+            rustup default "$RUST_TOOLCHAIN"
+            exit 0
+          fi
 
           attempt=1
           while [ "$attempt" -le 3 ]; do
@@ -252,11 +263,24 @@ jobs:
         run: |
           set -eu
 
+          rust_target_toolchain_ready() {
+            rustup run "$RUST_TOOLCHAIN" rustc --version >/dev/null 2>&1 || return 1
+            rustup run "$RUST_TOOLCHAIN" cargo --version >/dev/null 2>&1 || return 1
+            rustup target list --toolchain "$RUST_TOOLCHAIN" --installed \
+              | grep -Fx "$RUST_TARGET" >/dev/null 2>&1 || return 1
+          }
+
           install_rust_toolchain() {
             rustup toolchain install "$RUST_TOOLCHAIN" \
               --profile minimal \
               --target "$RUST_TARGET"
           }
+
+          if rust_target_toolchain_ready; then
+            printf '%s\n' "Using preinstalled Rust target toolchain: $RUST_TOOLCHAIN / $RUST_TARGET"
+            rustup default "$RUST_TOOLCHAIN"
+            exit 0
+          fi
 
           attempt=1
           while [ "$attempt" -le 3 ]; do
