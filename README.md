@@ -190,11 +190,22 @@ Common overrides:
 - `build-output-dir`
 - `built-binary-name`
 - `artifact-name`
+- `setup-bun`
+- `bun-version`
+- `bun-install-command`
+- `release-env`
+- `homebrew-build-packages`
 - `publish-runner`
 - `homebrew-tap`
 - `publish-github-release`
 - `run-homebrew-proof`
 - `installed-smoke-command`
+
+For TypeScript/Bun products, set `setup-bun: true`; use `bun-version` when the
+repo needs a pinned Bun version. `release-env` exports newline-delimited
+`KEY=VALUE` entries before every release-interface verb, and
+`homebrew-build-packages` installs newline-delimited build-time Homebrew tools
+such as `sops` on macOS release runners.
 
 For the private `e0da/internal` tap, callers that leave
 `run-homebrew-proof: true` must provide `HOMEBREW_GITHUB_API_TOKEN` so Homebrew

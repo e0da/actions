@@ -33,6 +33,31 @@ on:
         required: false
         type: string
         default: homebrew-interface-payload
+      setup-bun:
+        description: "Install Bun before running the release interface."
+        required: false
+        type: boolean
+        default: false
+      bun-version:
+        description: "Bun version passed to oven-sh/setup-bun when setup-bun is true."
+        required: false
+        type: string
+        default: latest
+      bun-install-command:
+        description: "Command run after Bun setup; set empty to skip dependency installation."
+        required: false
+        type: string
+        default: bun install --frozen-lockfile
+      release-env:
+        description: "Optional newline-delimited KEY=VALUE entries exported before release-interface commands."
+        required: false
+        type: string
+        default: ""
+      homebrew-build-packages:
+        description: "Optional newline-delimited Homebrew packages required before build/test."
+        required: false
+        type: string
+        default: ""
       publish-runner:
         description: "Runner for GitHub release asset publication."
         required: false
@@ -78,6 +103,59 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Set up Bun
+        if: inputs.setup-bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun-version }}
+
+      - name: Install Bun dependencies
+        if: inputs.setup-bun && inputs.bun-install-command != ''
+        shell: sh
+        run: ${{ inputs.bun-install-command }}
+
+      - name: Export release environment
+        shell: sh
+        env:
+          RELEASE_ENV: ${{ inputs.release-env }}
+        run: |
+          set -eu
+          [ -n "$RELEASE_ENV" ] || exit 0
+          printf '%s\n' "$RELEASE_ENV" | while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            key=${line%%=*}
+            case "$line" in
+              *=*) ;;
+              *)
+                echo "invalid release-env entry: $line" >&2
+                exit 2
+                ;;
+            esac
+            case "$key" in
+              ""|[0-9]*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*)
+                echo "invalid release-env key: $key" >&2
+                exit 2
+                ;;
+            esac
+            printf '%s\n' "$line" >> "$GITHUB_ENV"
+          done
+
+      - name: Install Homebrew build packages
+        shell: sh
+        env:
+          HOMEBREW_BUILD_PACKAGES: ${{ inputs.homebrew-build-packages }}
+        run: |
+          set -eu
+          [ -n "$HOMEBREW_BUILD_PACKAGES" ] || exit 0
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "homebrew-build-packages requires brew on the selected runner." >&2
+            exit 1
+          fi
+          printf '%s\n' "$HOMEBREW_BUILD_PACKAGES" | while IFS= read -r package; do
+            [ -n "$package" ] || continue
+            brew install "$package"
+          done
 
       - name: Run release metadata
         shell: sh
