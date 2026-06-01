@@ -39,10 +39,10 @@ on:
         type: string
         default: "make validate"
       provider-cache-mode:
-        description: "Provider plugin cache policy. read-write restores/saves a GitHub cache; off skips cache setup."
+        description: "Provider plugin cache policy. restore restores a GitHub cache without saving; read-write also saves after validation; off skips cache setup."
         required: false
         type: string
-        default: read-write
+        default: restore
       provider-download-retry:
         description: "OpenTofu TF_PROVIDER_DOWNLOAD_RETRY value for retrying safe provider download failures."
         required: false
@@ -113,9 +113,9 @@ jobs:
           esac
 
           case "$PROVIDER_CACHE_MODE" in
-            read-write|off) ;;
+            restore|read-write|off) ;;
             *)
-              echo "::error::Unknown provider-cache-mode '${PROVIDER_CACHE_MODE}'. Expected one of: read-write, off."
+              echo "::error::Unknown provider-cache-mode '${PROVIDER_CACHE_MODE}'. Expected one of: restore, read-write, off."
               exit 1
               ;;
           esac
@@ -247,7 +247,7 @@ jobs:
           tofu_wrapper: false
 
       - name: Prepare OpenTofu provider cache
-        if: inputs.provider-cache-mode == 'read-write'
+        if: inputs.provider-cache-mode != 'off'
         env:
           TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.opentofu/plugin-cache
         shell: sh
@@ -255,9 +255,10 @@ jobs:
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
           printf 'TF_PLUGIN_CACHE_DIR=%s\n' "$TF_PLUGIN_CACHE_DIR" >> "$GITHUB_ENV"
 
-      - name: Cache OpenTofu providers
-        if: inputs.provider-cache-mode == 'read-write'
-        uses: actions/cache@v5
+      - name: Restore OpenTofu providers
+        id: opentofu-provider-cache
+        if: inputs.provider-cache-mode != 'off'
+        uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.opentofu/plugin-cache
           key: opentofu-provider-${{ runner.os }}-${{ runner.arch }}-${{ inputs.tofu-version }}-${{ hashFiles('**/.terraform.lock.hcl') }}
@@ -275,3 +276,10 @@ jobs:
           VALIDATE_COMMAND: ${{ inputs.validate-command }}
         shell: sh
         run: sh -c "$VALIDATE_COMMAND"
+
+      - name: Save OpenTofu providers
+        if: inputs.provider-cache-mode == 'read-write' && steps.opentofu-provider-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.opentofu/plugin-cache
+          key: ${{ steps.opentofu-provider-cache.outputs.cache-primary-key }}
