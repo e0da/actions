@@ -167,6 +167,40 @@ Runner override inputs:
 - `publish-runner`
 - `image-runner`
 
+### `release-homebrew-interface.yml` — Homebrew release-interface proof
+
+Reusable release workflow for active non-service products that expose an
+app-owned `scripts/release-interface` contract. It runs the interface's
+`metadata`, `test`, `build`, and `smoke` verbs, packages the build output with a
+checksum, can publish those assets to the current GitHub tag release, and can
+prove the installed Homebrew formula with `brew fetch`, `brew install`, and
+`brew test`.
+
+This workflow is for installable product surfaces such as ALX and Mozak. The
+app repo owns how to build and smoke its payload; `e0da/actions` owns the shared
+orchestration and evidence shape.
+
+Required input:
+
+- `homebrew-formula`
+
+Common overrides:
+
+- `release-interface`
+- `build-output-dir`
+- `built-binary-name`
+- `artifact-name`
+- `publish-runner`
+- `homebrew-tap`
+- `publish-github-release`
+- `run-homebrew-proof`
+- `installed-smoke-command`
+
+For the private `e0da/internal` tap, callers that leave
+`run-homebrew-proof: true` must provide `HOMEBREW_GITHUB_API_TOKEN` so Homebrew
+can read the private tap and private release assets. `publish-github-release`
+only runs on tag refs; non-tag callers fail before release publication.
+
 ## How to adopt
 
 In any repo, create `.github/workflows/ci.yml`:
