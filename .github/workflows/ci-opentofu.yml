@@ -38,6 +38,26 @@ on:
         required: false
         type: string
         default: "make validate"
+      provider-cache-mode:
+        description: "Provider plugin cache policy. read-write restores/saves a GitHub cache; off skips cache setup."
+        required: false
+        type: string
+        default: read-write
+      provider-download-retry:
+        description: "OpenTofu TF_PROVIDER_DOWNLOAD_RETRY value for retrying safe provider download failures."
+        required: false
+        type: string
+        default: "3"
+      registry-discovery-retry:
+        description: "OpenTofu TF_REGISTRY_DISCOVERY_RETRY value for registry discovery requests."
+        required: false
+        type: string
+        default: "3"
+      registry-client-timeout:
+        description: "OpenTofu TF_REGISTRY_CLIENT_TIMEOUT value in seconds."
+        required: false
+        type: string
+        default: "30"
 
 jobs:
   opentofu:
@@ -45,17 +65,38 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_PROVIDER_DOWNLOAD_RETRY: ${{ inputs.provider-download-retry }}
+      TF_REGISTRY_DISCOVERY_RETRY: ${{ inputs.registry-discovery-retry }}
+      TF_REGISTRY_CLIENT_TIMEOUT: ${{ inputs.registry-client-timeout }}
     steps:
       - name: Validate runner contract
         env:
           RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
           RUNNER_CAPABILITIES: ${{ inputs['runner-capabilities'] }}
           RUNNER_MANIFEST: ${{ inputs['runner-manifest'] }}
+          PROVIDER_CACHE_MODE: ${{ inputs.provider-cache-mode }}
+          PROVIDER_DOWNLOAD_RETRY: ${{ inputs.provider-download-retry }}
+          REGISTRY_DISCOVERY_RETRY: ${{ inputs.registry-discovery-retry }}
+          REGISTRY_CLIENT_TIMEOUT: ${{ inputs.registry-client-timeout }}
           OBSERVED_RUNNER_OS: ${{ runner.os }}
           OBSERVED_RUNNER_ARCH: ${{ runner.arch }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -eu
+
+          require_unsigned_integer() {
+            name="$1"
+            value="$2"
+
+            case "$value" in
+              ""|*[!0-9]*)
+                echo "::error::${name} must be an unsigned integer, got '${value:-<missing>}.'"
+                exit 1
+                ;;
+            esac
+          }
 
           case "$RUNNER_PROFILE" in
             ""|hosted-linux|puck-linux-arm64|puck-macos-arm64) ;;
@@ -64,6 +105,18 @@ jobs:
               exit 1
               ;;
           esac
+
+          case "$PROVIDER_CACHE_MODE" in
+            read-write|off) ;;
+            *)
+              echo "::error::Unknown provider-cache-mode '${PROVIDER_CACHE_MODE}'. Expected one of: read-write, off."
+              exit 1
+              ;;
+          esac
+
+          require_unsigned_integer provider-download-retry "$PROVIDER_DOWNLOAD_RETRY"
+          require_unsigned_integer registry-discovery-retry "$REGISTRY_DISCOVERY_RETRY"
+          require_unsigned_integer registry-client-timeout "$REGISTRY_CLIENT_TIMEOUT"
 
           require_runner() {
             expected_os="$1"
@@ -187,12 +240,32 @@ jobs:
           tofu_version: ${{ inputs.tofu-version }}
           tofu_wrapper: false
 
+      - name: Prepare OpenTofu provider cache
+        if: inputs.provider-cache-mode == 'read-write'
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.opentofu/plugin-cache
+        shell: sh
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          printf 'TF_PLUGIN_CACHE_DIR=%s\n' "$TF_PLUGIN_CACHE_DIR" >> "$GITHUB_ENV"
+
+      - name: Cache OpenTofu providers
+        if: inputs.provider-cache-mode == 'read-write'
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.opentofu/plugin-cache
+          key: opentofu-provider-${{ runner.os }}-${{ runner.arch }}-${{ inputs.tofu-version }}-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            opentofu-provider-${{ runner.os }}-${{ runner.arch }}-${{ inputs.tofu-version }}-
+
       - name: Check formatting
         env:
           FMT_COMMAND: ${{ inputs.fmt-command }}
-        run: bash -lc "$FMT_COMMAND"
+        shell: sh
+        run: sh -c "$FMT_COMMAND"
 
       - name: Validate
         env:
           VALIDATE_COMMAND: ${{ inputs.validate-command }}
-        run: bash -lc "$VALIDATE_COMMAND"
+        shell: sh
+        run: sh -c "$VALIDATE_COMMAND"

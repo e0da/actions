@@ -127,8 +127,12 @@ Runs `opentofu/setup-opentofu`, then:
 - validation, default `make validate`
 
 Callers can override `fmt-command`, `validate-command`, `tofu-version`, and
-`runner`. They can also provide an optional `runner-manifest` contract JSON
-snippet to validate requested capabilities before setup runs.
+`runner`. The workflow also enables OpenTofu provider resilience by default:
+`provider-cache-mode: read-write`, `provider-download-retry: 3`,
+`registry-discovery-retry: 3`, and `registry-client-timeout: 30`. Set
+`provider-cache-mode: off` for measured no-cache runs. Callers can also provide
+an optional `runner-manifest` contract JSON snippet to validate requested
+capabilities before setup runs.
 
 ### `ci-rust.yml` — Rust repos
 
