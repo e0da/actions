@@ -58,6 +58,11 @@ on:
         required: false
         type: string
         default: "30"
+      go-debug:
+        description: "GODEBUG value for OpenTofu's Go runtime. Defaults to disabling HTTP/2 client transport for provider downloads."
+        required: false
+        type: string
+        default: "http2client=0"
 
 jobs:
   opentofu:
@@ -66,6 +71,7 @@ jobs:
     permissions:
       contents: read
     env:
+      GODEBUG: ${{ inputs.go-debug }}
       TF_IN_AUTOMATION: "1"
       TF_PROVIDER_DOWNLOAD_RETRY: ${{ inputs.provider-download-retry }}
       TF_REGISTRY_DISCOVERY_RETRY: ${{ inputs.registry-discovery-retry }}
