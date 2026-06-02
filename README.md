@@ -129,14 +129,14 @@ Runs `opentofu/setup-opentofu`, then:
 Callers can override `fmt-command`, `validate-command`, `tofu-version`, and
 `runner`. The workflow also enables OpenTofu provider resilience by default:
 `provider-cache-mode: restore`, `provider-download-retry: 3`,
-`registry-discovery-retry: 3`, `registry-client-timeout: 30`, and
-`go-debug: http2client=0`. Set `provider-cache-mode: read-write` only for
-deliberate cache-warming runs because provider-cache uploads can dominate
-self-hosted runner tail latency. Set `provider-cache-mode: off` for measured
-no-cache runs. Override `go-debug` only when a caller needs OpenTofu's Go HTTP
-client to use the runtime default transport behavior. Callers can also provide
-an optional `runner-manifest` contract JSON snippet to validate requested
-capabilities before setup runs.
+`registry-discovery-retry: 3`, `registry-client-timeout: 30`,
+`validate-timeout-minutes: 10`, and `go-debug: http2client=0`. Set
+`provider-cache-mode: read-write` only for deliberate cache-warming runs because
+provider-cache uploads can dominate self-hosted runner tail latency. Set
+`provider-cache-mode: off` for measured no-cache runs. Override `go-debug` only
+when a caller needs OpenTofu's Go HTTP client to use the runtime default
+transport behavior. Callers can also provide an optional `runner-manifest`
+contract JSON snippet to validate requested capabilities before setup runs.
 
 ### `ci-rust.yml` — Rust repos
 
