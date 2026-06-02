@@ -324,6 +324,7 @@ jobs:
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rust-nobin
           shared-key: stable-${{ runner.os }}-${{ matrix.target }}
           cache-bin: "false"
 
