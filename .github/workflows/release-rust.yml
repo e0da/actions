@@ -325,6 +325,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: stable-${{ runner.os }}-${{ matrix.target }}
+          cache-bin: "false"
 
       - name: Build release binary
         shell: sh
