@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: "make validate"
+      validate-timeout-minutes:
+        description: "Maximum minutes allowed for the validation command before GitHub cancels the step."
+        required: false
+        type: number
+        default: 10
       provider-cache-mode:
         description: "Provider plugin cache policy. restore restores a GitHub cache without saving; read-write also saves after validation; off skips cache setup."
         required: false
@@ -86,6 +91,7 @@ jobs:
           PROVIDER_DOWNLOAD_RETRY: ${{ inputs.provider-download-retry }}
           REGISTRY_DISCOVERY_RETRY: ${{ inputs.registry-discovery-retry }}
           REGISTRY_CLIENT_TIMEOUT: ${{ inputs.registry-client-timeout }}
+          VALIDATE_TIMEOUT_MINUTES: ${{ inputs.validate-timeout-minutes }}
           OBSERVED_RUNNER_OS: ${{ runner.os }}
           OBSERVED_RUNNER_ARCH: ${{ runner.arch }}
           REPOSITORY: ${{ github.repository }}
@@ -102,6 +108,18 @@ jobs:
                 exit 1
                 ;;
             esac
+          }
+
+          require_positive_integer() {
+            name="$1"
+            value="$2"
+
+            require_unsigned_integer "$name" "$value"
+
+            if [ "$value" -eq 0 ]; then
+              echo "::error::${name} must be greater than zero."
+              exit 1
+            fi
           }
 
           case "$RUNNER_PROFILE" in
@@ -123,6 +141,7 @@ jobs:
           require_unsigned_integer provider-download-retry "$PROVIDER_DOWNLOAD_RETRY"
           require_unsigned_integer registry-discovery-retry "$REGISTRY_DISCOVERY_RETRY"
           require_unsigned_integer registry-client-timeout "$REGISTRY_CLIENT_TIMEOUT"
+          require_positive_integer validate-timeout-minutes "$VALIDATE_TIMEOUT_MINUTES"
 
           require_runner() {
             expected_os="$1"
@@ -272,6 +291,7 @@ jobs:
         run: sh -c "$FMT_COMMAND"
 
       - name: Validate
+        timeout-minutes: ${{ inputs.validate-timeout-minutes }}
         env:
           VALIDATE_COMMAND: ${{ inputs.validate-command }}
         shell: sh
