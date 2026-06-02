@@ -148,7 +148,10 @@ runner does not already provide it, then installs the requested toolchain. For
 integration tests that need NATS, callers can set `start-nats-jetstream: true` and
 `nats-test-url: nats://localhost:4222`. Rust dependency and target caches stay
 enabled, but `${CARGO_HOME}/bin` is not cached; executable Rust tools are owned
-by the runner image or explicit install steps, not by restored cache state.
+by the runner image or explicit install steps, not by restored cache state. The
+Rust cache namespace is `v1-rust-nobin`, which intentionally avoids restoring
+older `v0-rust` archives that were created before executable-bin caching was
+disabled.
 
 ### `release-rust.yml` — Rust release artifacts
 
@@ -169,7 +172,8 @@ Linux ARM64 musl artifact on the `linux-arm64-runner`, which defaults to
 (`apk`) musl setup on Linux runners. The build matrix is generated from
 `targets`, so unrequested platforms do not allocate a runner just to skip.
 Rust release caches also skip `${CARGO_HOME}/bin` so release dependency reuse
-does not persist executable tool state across runner images or products.
+does not persist executable tool state across runner images or products. Release
+Rust caches use the same `v1-rust-nobin` namespace as CI Rust caches.
 
 Runner override inputs:
 
