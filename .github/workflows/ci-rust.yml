@@ -245,6 +245,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ${{ inputs.toolchain }}-${{ runner.os }}
+          cache-bin: "false"
 
       - name: Install cargo-nextest from prebuilt binaries
         uses: taiki-e/install-action@v2

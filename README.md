@@ -146,7 +146,9 @@ Callers can override `runner`, the Rust toolchain, feature flags, test args,
 and apt system dependencies. The workflow installs `rustup` when a self-hosted
 runner does not already provide it, then installs the requested toolchain. For
 integration tests that need NATS, callers can set `start-nats-jetstream: true` and
-`nats-test-url: nats://localhost:4222`.
+`nats-test-url: nats://localhost:4222`. Rust dependency and target caches stay
+enabled, but `${CARGO_HOME}/bin` is not cached; executable Rust tools are owned
+by the runner image or explicit install steps, not by restored cache state.
 
 ### `release-rust.yml` — Rust release artifacts
 
@@ -166,6 +168,8 @@ Linux ARM64 musl artifact on the `linux-arm64-runner`, which defaults to
 `puck-linux-arm64`. The workflow supports Debian/Ubuntu (`apt-get`) and Alpine
 (`apk`) musl setup on Linux runners. The build matrix is generated from
 `targets`, so unrequested platforms do not allocate a runner just to skip.
+Rust release caches also skip `${CARGO_HOME}/bin` so release dependency reuse
+does not persist executable tool state across runner images or products.
 
 Runner override inputs:
 
