@@ -262,6 +262,7 @@ jobs:
         shell: sh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -eu
           set -- *.tar.gz

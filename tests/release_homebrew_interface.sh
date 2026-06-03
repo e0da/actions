@@ -63,6 +63,7 @@ require_literal "$workflow" "if: inputs.publish-github-release && github.ref_typ
 require_literal "$workflow" "if: inputs.publish-github-release && github.ref_type == 'tag'"
 require_literal "$workflow" "contents: read"
 require_literal "$workflow" "contents: write"
+require_literal "$workflow" "GH_REPO: \${{ github.repository }}"
 require_literal "$workflow" "gh release create \"\$GITHUB_REF_NAME\""
 require_literal "$workflow" "CALLER_HOMEBREW_GITHUB_API_TOKEN:"
 require_literal "$workflow" "HOMEBREW_GITHUB_API_TOKEN secret is required for e0da/internal Homebrew proof."
