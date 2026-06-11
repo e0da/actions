@@ -153,6 +153,20 @@ Rust cache namespace is `v1-rust-nobin`, which intentionally avoids restoring
 older `v0-rust` archives that were created before executable-bin caching was
 disabled.
 
+### `ci-unity.yml` — Unity Android projects
+
+Runs Unity projects through the shared Android build gate on a macOS ARM64
+runner. The workflow validates the runner profile, checks out Git LFS content,
+requires the requested Unity editor version under `/Applications/Unity/Hub`,
+requires Android Build Support with SDK, NDK, and OpenJDK, runs the
+caller-owned repository check command, opens the project in batch mode, runs
+Unity tests, invokes the caller-owned static build method, and uploads the build
+artifact plus Unity logs.
+
+Callers must provide `project-path` and `build-method`. Common overrides are
+`runner`, `runner-profile`, `unity-version`, `check-command`, `run-tests`,
+`test-platform`, `build-target`, `build-output-dir`, and `artifact-name`.
+
 ### `release-rust.yml` — Rust release artifacts
 
 Reusable release workflow for tagged Rust binary releases. It validates the
@@ -271,6 +285,13 @@ jobs:
   # Add for Rust repos:
   rust:
     uses: e0da/actions/.github/workflows/ci-rust.yml@main
+
+  # Add for Unity Android repos:
+  unity:
+    uses: e0da/actions/.github/workflows/ci-unity.yml@main
+    with:
+      project-path: unity/GalliumXR
+      build-method: Gallium.Build.CI.BuildAndroid
 ```
 
 Mix and match — only include the workflows relevant to each repo.

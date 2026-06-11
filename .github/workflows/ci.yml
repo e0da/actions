@@ -76,3 +76,4 @@ jobs:
           sh tests/runner_manifest_validation.sh
           sh tests/rust_workflows_arc_ready.sh
           sh tests/release_homebrew_interface.sh
+          sh tests/unity_ci_contract.sh
