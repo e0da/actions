@@ -1,0 +1,288 @@
+name: CI Unity
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for Unity jobs."
+        required: false
+        type: string
+        default: puck-macos-arm64
+      runner-profile:
+        description: "Runner profile metadata used for validation; does not affect scheduling."
+        required: false
+        type: string
+        default: puck-macos-arm64
+      unity-version:
+        description: "Unity editor version expected under /Applications/Unity/Hub/Editor."
+        required: false
+        type: string
+        default: 6000.3.2f1
+      project-path:
+        description: "Path to the Unity project in the caller repository."
+        required: true
+        type: string
+      check-command:
+        description: "Caller-owned repository check command run before Unity opens the project. Set empty to skip."
+        required: false
+        type: string
+        default: scripts/check
+      run-tests:
+        description: "Run Unity Test Runner before the build."
+        required: false
+        type: boolean
+        default: true
+      test-platform:
+        description: "Unity Test Runner platform, usually editmode or playmode."
+        required: false
+        type: string
+        default: editmode
+      test-results-dir:
+        description: "Directory where Unity test result XML files are written."
+        required: false
+        type: string
+        default: TestResults
+      build-target:
+        description: "Unity build target. This workflow currently validates Android support."
+        required: false
+        type: string
+        default: Android
+      build-method:
+        description: "Static Unity editor method used to perform the project-owned build."
+        required: true
+        type: string
+      build-output-dir:
+        description: "Directory where the Unity build method writes artifacts."
+        required: false
+        type: string
+        default: Builds/Android
+      artifact-name:
+        description: "Name for the uploaded Unity build artifact."
+        required: false
+        type: string
+        default: unity-android-build
+
+jobs:
+  unity:
+    name: Unity Android Build
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Validate runner contract
+        env:
+          RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
+          OBSERVED_RUNNER_OS: ${{ runner.os }}
+          OBSERVED_RUNNER_ARCH: ${{ runner.arch }}
+        run: |
+          set -eu
+
+          case "$RUNNER_PROFILE" in
+            ""|hosted-linux|puck-linux-arm64|puck-macos-arm64) ;;
+            *)
+              echo "::error::Unknown runner-profile '${RUNNER_PROFILE}'. Expected one of: hosted-linux, puck-linux-arm64, puck-macos-arm64."
+              exit 1
+              ;;
+          esac
+
+          require_runner() {
+            expected_os="$1"
+            expected_arch="${2:-}"
+
+            if [ "$OBSERVED_RUNNER_OS" != "$expected_os" ]; then
+              echo "::error::runner-profile '${RUNNER_PROFILE}' requires runner.os '${expected_os}', got '${OBSERVED_RUNNER_OS}'."
+              exit 1
+            fi
+
+            if [ -n "$expected_arch" ] && [ "$OBSERVED_RUNNER_ARCH" != "$expected_arch" ]; then
+              echo "::error::runner-profile '${RUNNER_PROFILE}' requires runner.arch '${expected_arch}', got '${OBSERVED_RUNNER_ARCH}'."
+              exit 1
+            fi
+          }
+
+          case "$RUNNER_PROFILE" in
+            hosted-linux) require_runner Linux ;;
+            puck-linux-arm64) require_runner Linux ARM64 ;;
+            puck-macos-arm64) require_runner macOS ARM64 ;;
+          esac
+
+          echo "Runner contract OK: profile='${RUNNER_PROFILE:-<none>}' os='${OBSERVED_RUNNER_OS}' arch='${OBSERVED_RUNNER_ARCH}'."
+
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Validate Unity inputs
+        env:
+          PROJECT_PATH: ${{ inputs['project-path'] }}
+          UNITY_VERSION: ${{ inputs['unity-version'] }}
+          BUILD_TARGET: ${{ inputs['build-target'] }}
+          BUILD_OUTPUT_DIR: ${{ inputs['build-output-dir'] }}
+        run: |
+          set -eu
+
+          case "$PROJECT_PATH" in
+            ""|/|.|/*|*..*)
+              echo "::error::unsafe project-path: ${PROJECT_PATH:-<empty>}"
+              exit 2
+              ;;
+          esac
+
+          case "$BUILD_OUTPUT_DIR" in
+            ""|/|.|/*|*..*)
+              echo "::error::unsafe build-output-dir: ${BUILD_OUTPUT_DIR:-<empty>}"
+              exit 2
+              ;;
+          esac
+
+          if [ "$BUILD_TARGET" != Android ]; then
+            echo "::error::ci-unity currently supports build-target Android, got '${BUILD_TARGET}'."
+            exit 2
+          fi
+
+          project_version_file="$PROJECT_PATH/ProjectSettings/ProjectVersion.txt"
+          if [ ! -f "$project_version_file" ]; then
+            echo "::error::Unity project version file not found: $project_version_file"
+            exit 1
+          fi
+
+          if ! grep -F "m_EditorVersion: $UNITY_VERSION" "$project_version_file" >/dev/null; then
+            echo "::error::Unity project does not declare m_EditorVersion: $UNITY_VERSION"
+            cat "$project_version_file"
+            exit 1
+          fi
+
+      - name: Validate Unity editor and Android module
+        id: unity
+        env:
+          UNITY_VERSION: ${{ inputs['unity-version'] }}
+        run: |
+          set -eu
+
+          unity_root="/Applications/Unity/Hub/Editor/${UNITY_VERSION}"
+          unity_executable="${unity_root}/Unity.app/Contents/MacOS/Unity"
+          android_player="${unity_root}/PlaybackEngines/AndroidPlayer"
+
+          if [ ! -x "$unity_executable" ]; then
+            echo "::error::Unity editor not found or not executable: $unity_executable"
+            exit 1
+          fi
+
+          if [ ! -d "$android_player" ]; then
+            echo "::error::Unity Android Build Support not found: $android_player"
+            exit 1
+          fi
+
+          for required_path in "$android_player/SDK" "$android_player/NDK" "$android_player/OpenJDK"; do
+            if [ ! -d "$required_path" ]; then
+              echo "::error::Unity Android Build Support is missing required path: $required_path"
+              exit 1
+            fi
+          done
+
+          {
+            echo "executable=$unity_executable"
+            echo "android-player=$android_player"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run repository checks
+        if: inputs.check-command != ''
+        env:
+          CHECK_COMMAND: ${{ inputs['check-command'] }}
+        run: sh -c "$CHECK_COMMAND"
+
+      - name: Open Unity project
+        env:
+          PROJECT_PATH: ${{ inputs['project-path'] }}
+          UNITY_EXECUTABLE: ${{ steps.unity.outputs.executable }}
+          UNITY_LOG_DIR: ${{ runner.temp }}/unity-logs
+        run: |
+          set -eu
+          mkdir -p "$UNITY_LOG_DIR"
+          "$UNITY_EXECUTABLE" \
+            -batchmode \
+            -quit \
+            -nographics \
+            -projectPath "$PROJECT_PATH" \
+            -logFile "$UNITY_LOG_DIR/project-open.log"
+
+      - name: Run Unity tests
+        if: inputs.run-tests
+        env:
+          PROJECT_PATH: ${{ inputs['project-path'] }}
+          TEST_PLATFORM: ${{ inputs['test-platform'] }}
+          TEST_RESULTS_DIR: ${{ inputs['test-results-dir'] }}
+          UNITY_EXECUTABLE: ${{ steps.unity.outputs.executable }}
+          UNITY_LOG_DIR: ${{ runner.temp }}/unity-logs
+        run: |
+          set -eu
+          mkdir -p "$TEST_RESULTS_DIR" "$UNITY_LOG_DIR"
+          "$UNITY_EXECUTABLE" \
+            -batchmode \
+            -quit \
+            -nographics \
+            -projectPath "$PROJECT_PATH" \
+            -runTests \
+            -testPlatform "$TEST_PLATFORM" \
+            -testResults "$TEST_RESULTS_DIR/${TEST_PLATFORM}.xml" \
+            -logFile "$UNITY_LOG_DIR/tests-${TEST_PLATFORM}.log"
+
+      - name: Build Android player
+        env:
+          BUILD_METHOD: ${{ inputs['build-method'] }}
+          BUILD_OUTPUT_DIR: ${{ inputs['build-output-dir'] }}
+          BUILD_TARGET: ${{ inputs['build-target'] }}
+          PROJECT_PATH: ${{ inputs['project-path'] }}
+          UNITY_BUILD_OUTPUT_DIR: ${{ inputs['build-output-dir'] }}
+          UNITY_BUILD_TARGET: ${{ inputs['build-target'] }}
+          UNITY_EXECUTABLE: ${{ steps.unity.outputs.executable }}
+          UNITY_LOG_DIR: ${{ runner.temp }}/unity-logs
+        run: |
+          set -eu
+          rm -rf "$BUILD_OUTPUT_DIR"
+          mkdir -p "$BUILD_OUTPUT_DIR" "$UNITY_LOG_DIR"
+          "$UNITY_EXECUTABLE" \
+            -batchmode \
+            -quit \
+            -nographics \
+            -projectPath "$PROJECT_PATH" \
+            -buildTarget "$BUILD_TARGET" \
+            -executeMethod "$BUILD_METHOD" \
+            -logFile "$UNITY_LOG_DIR/build.log"
+
+      - name: Validate build artifact
+        env:
+          BUILD_OUTPUT_DIR: ${{ inputs['build-output-dir'] }}
+        run: |
+          set -eu
+          if [ ! -d "$BUILD_OUTPUT_DIR" ]; then
+            echo "::error::Unity build output directory was not created: $BUILD_OUTPUT_DIR"
+            exit 1
+          fi
+
+          if ! find "$BUILD_OUTPUT_DIR" -type f | sed -n '1p' | grep . >/dev/null; then
+            echo "::error::Unity build output directory contains no files: $BUILD_OUTPUT_DIR"
+            exit 1
+          fi
+
+          find "$BUILD_OUTPUT_DIR" -type f | sort
+
+      - name: Upload Unity build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.build-output-dir }}
+          if-no-files-found: error
+
+      - name: Upload Unity logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}-logs
+          path: |
+            ${{ runner.temp }}/unity-logs
+            ${{ inputs.test-results-dir }}
+          if-no-files-found: ignore
