@@ -203,7 +203,7 @@ jobs:
                   emit unknown "$file" "$line" "$job" "expression" "reusable call uses expression runner input" "$text"
                 else
                   case "$workflow" in
-                    ci-*.yml|release-rust.yml)
+                    ci-*.yml|release-rust.yml|release-elixir.yml)
                       emit hosted "$file" "$line" "$job" "ubuntu-latest" "reusable call omits explicit runner override" "$text"
                       ;;
                     *)

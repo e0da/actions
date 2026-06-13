@@ -184,6 +184,23 @@ expect_success reusable_allowlisted_enforce "$repo" enforce
 assert_summary reusable_allowlisted_enforce "| Approved hosted findings | 1 |"
 assert_summary reusable_allowlisted_enforce "| Unapproved hosted findings | 0 |"
 
+repo="$(make_repo reusable-release-elixir-default)"
+cat > "$repo/.github/workflows/release.yml" <<'YAML'
+name: Release
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  release:
+    uses: e0da/actions/.github/workflows/release-elixir.yml@main
+    with:
+      app-name: platform
+      image-name: ghcr.io/e0da/platform
+YAML
+expect_success reusable_release_elixir_default_report "$repo" report
+assert_summary reusable_release_elixir_default_report "| Unapproved hosted findings | 1 |"
+expect_failure reusable_release_elixir_default_enforce "$repo" enforce "mode=enforce failed because unapproved hosted runner findings were found"
+
 repo="$(make_repo reusable-arc-scale-set)"
 cat > "$repo/.github/workflows/ci.yml" <<'YAML'
 name: CI
