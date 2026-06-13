@@ -197,6 +197,46 @@ Runner override inputs:
 - `publish-runner`
 - `image-runner`
 
+### `release-elixir.yml` — Elixir/Phoenix release images
+
+Reusable release workflow for tagged Elixir/Phoenix services. It validates the
+release tag against the Mix project version, prepares GHCR image tags, can push
+a multi-architecture Docker image, and can optionally create a GitHub Release.
+When `push-latest` is enabled, `:latest` is added only for non-prerelease
+versions; prereleases keep immutable version tags unless callers provide
+explicit `extra-tags`.
+
+Required inputs:
+
+- `app-name`
+- `image-name`
+
+Common overrides:
+
+- `validate-runner`
+- `image-runner`
+- `publish-runner`
+- `otp-version`
+- `elixir-version`
+- `beam-mode`
+- `deps-command`
+- `version-command`
+- `tag-prefix`
+- `docker-context`
+- `dockerfile`
+- `platforms`
+- `build-args`
+- `target`
+- `push-image`
+- `push-latest`
+- `extra-tags`
+- `publish-github-release`
+
+Trusted self-hosted callers can set `beam-mode: runner-preinstalled` when the
+runner image owns the requested BEAM version. Service repos should keep only a
+thin release caller and app-owned Dockerfile/release scripts; shared release
+policy belongs here.
+
 ### `release-homebrew-interface.yml` — Homebrew release-interface proof
 
 Reusable release workflow for active non-service products that expose an
@@ -296,6 +336,30 @@ jobs:
 
 Mix and match — only include the workflows relevant to each repo.
 
+For Elixir/Phoenix service image releases, create `.github/workflows/release.yml`:
+
+```yaml
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    uses: e0da/actions/.github/workflows/release-elixir.yml@main
+    with:
+      app-name: platform
+      image-name: ghcr.io/e0da/platform
+      push-image: true
+      publish-github-release: true
+    secrets: inherit
+```
+
 ### Adoption: yoda
 
 ```yaml
@@ -318,7 +382,7 @@ jobs:
 
 ## Adding a new workflow type
 
-1. Create `.github/workflows/ci-<type>.yml` in this repo using `workflow_call:` as the trigger
+1. Create `.github/workflows/ci-<type>.yml` or `.github/workflows/release-<type>.yml` in this repo using `workflow_call:` as the trigger
 2. Update this README with what it checks and when to adopt it
 3. Commit to `main` — adopters pin to `@main` so they pick it up automatically
 

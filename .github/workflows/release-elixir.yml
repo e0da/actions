@@ -1,0 +1,420 @@
+name: Release Elixir
+
+on:
+  workflow_call:
+    inputs:
+      app-name:
+        description: "OTP application name used for release reporting."
+        required: true
+        type: string
+      image-name:
+        description: "Full GHCR image name, for example ghcr.io/e0da/platform."
+        required: true
+        type: string
+      validate-runner:
+        description: "Runner label for BEAM setup, dependency install, and release metadata validation."
+        required: false
+        type: string
+        default: ubuntu-latest
+      image-runner:
+        description: "Runner label for Docker Buildx image publishing."
+        required: false
+        type: string
+        default: ubuntu-latest
+      publish-runner:
+        description: "Runner label for optional GitHub Release publication."
+        required: false
+        type: string
+        default: ubuntu-latest
+      otp-version:
+        description: "Erlang/OTP version passed to erlef/setup-beam."
+        required: false
+        type: string
+        default: "29.0.2"
+      elixir-version:
+        description: "Elixir version passed to erlef/setup-beam."
+        required: false
+        type: string
+        default: "1.20.1"
+      beam-mode:
+        description: "BEAM setup policy. setup-beam installs via erlef/setup-beam; runner-preinstalled uses erl/elixir/mix on PATH."
+        required: false
+        type: string
+        default: setup-beam
+      deps-command:
+        description: "Command that fetches production dependencies before version validation."
+        required: false
+        type: string
+        default: "mix deps.get --only prod"
+      version-command:
+        description: "Command that prints the Mix project version."
+        required: false
+        type: string
+        default: "mix run --no-start -e \"Mix.Project.config() |> Keyword.fetch!(:version) |> IO.puts()\""
+      tag-prefix:
+        description: "Git tag prefix prepended to the Mix project version."
+        required: false
+        type: string
+        default: "v"
+      docker-context:
+        description: "Docker build context path."
+        required: false
+        type: string
+        default: "."
+      dockerfile:
+        description: "Dockerfile path passed to docker/build-push-action."
+        required: false
+        type: string
+        default: "Dockerfile"
+      platforms:
+        description: "Comma-delimited Buildx platforms."
+        required: false
+        type: string
+        default: "linux/amd64,linux/arm64"
+      build-args:
+        description: "Optional newline-delimited Docker build args."
+        required: false
+        type: string
+        default: ""
+      target:
+        description: "Optional Docker build target."
+        required: false
+        type: string
+        default: ""
+      push-image:
+        description: "Push the built image to GHCR."
+        required: false
+        type: boolean
+        default: false
+      push-latest:
+        description: "Add an image-name:latest tag for non-prerelease image pushes."
+        required: false
+        type: boolean
+        default: true
+      extra-tags:
+        description: "Optional newline-delimited additional full image tags."
+        required: false
+        type: string
+        default: ""
+      publish-github-release:
+        description: "Create or update a GitHub Release for the current tag."
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      private_deps_ssh_key:
+        description: "Optional SSH private key for fetching private cross-repo git deps."
+        required: false
+      GHCR_TOKEN:
+        description: "Optional token for GHCR pushes; defaults to GITHUB_TOKEN when omitted."
+        required: false
+    outputs:
+      version:
+        description: "Mix project version validated against the current tag."
+        value: ${{ jobs.validate.outputs.version }}
+      prerelease:
+        description: "Whether the validated version is a prerelease."
+        value: ${{ jobs.validate.outputs.prerelease }}
+      image:
+        description: "Canonical image name."
+        value: ${{ jobs.validate.outputs.image }}
+      image-tags:
+        description: "Newline-delimited image tags prepared for the release."
+        value: ${{ jobs.validate.outputs.image-tags }}
+      image-digest:
+        description: "Pushed image digest when push-image is enabled."
+        value: ${{ jobs.push-image.outputs.image-digest }}
+
+defaults:
+  run:
+    shell: sh
+
+jobs:
+  validate:
+    name: Validate Elixir Release
+    runs-on: ${{ inputs.validate-runner }}
+    outputs:
+      version: ${{ steps.release-meta.outputs.version }}
+      prerelease: ${{ steps.release-meta.outputs.prerelease }}
+      image: ${{ steps.image-meta.outputs.image }}
+      image-tags: ${{ steps.image-meta.outputs.tags }}
+    permissions:
+      contents: read
+    env:
+      MIX_ENV: prod
+      PRIVATE_DEPS_SSH_KEY: ${{ secrets.private_deps_ssh_key }}
+
+    steps:
+      - name: Validate release policy inputs
+        env:
+          APP_NAME: ${{ inputs.app-name }}
+          BEAM_MODE: ${{ inputs.beam-mode }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          PLATFORMS: ${{ inputs.platforms }}
+          PUSH_LATEST: ${{ inputs.push-latest }}
+        run: |
+          set -eu
+
+          for required_value in "$APP_NAME" "$IMAGE_NAME" "$PLATFORMS"; do
+            if [ -z "$required_value" ]; then
+              echo "::error::app-name, image-name, and platforms must be non-empty."
+              exit 1
+            fi
+          done
+
+          case "$BEAM_MODE" in
+            setup-beam|runner-preinstalled)
+              ;;
+            *)
+              echo "::error::Unknown beam-mode '${BEAM_MODE}'. Expected one of: setup-beam, runner-preinstalled."
+              exit 1
+              ;;
+          esac
+
+          case "$PUSH_LATEST" in
+            true|false)
+              ;;
+            *)
+              echo "::error::push-latest must be true or false."
+              exit 1
+              ;;
+          esac
+
+          case "$IMAGE_NAME" in
+            *[A-Z]*)
+              echo "::error::image-name must be lowercase for Docker registry compatibility: ${IMAGE_NAME}"
+              exit 1
+              ;;
+          esac
+
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up BEAM
+        if: inputs.beam-mode == 'setup-beam'
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ inputs.otp-version }}
+          elixir-version: ${{ inputs.elixir-version }}
+
+      - name: Verify preinstalled BEAM
+        if: inputs.beam-mode == 'runner-preinstalled'
+        run: |
+          set -eu
+
+          command -v erl
+          command -v elixir
+          command -v mix
+
+          erl -version
+          elixir --version
+          mix --version
+
+      - name: Configure private git deps (SSH)
+        if: ${{ env.PRIVATE_DEPS_SSH_KEY != '' }}
+        env:
+          SSH_KEY: ${{ secrets.private_deps_ssh_key }}
+        run: |
+          set -eu
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/private_deps
+          chmod 600 ~/.ssh/private_deps
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host github.com\n  IdentityFile ~/.ssh/private_deps\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+
+      - name: Install deps
+        run: ${{ inputs.deps-command }}
+
+      - name: Validate tag matches Mix project version
+        id: release-meta
+        env:
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+          VERSION_COMMAND: ${{ inputs.version-command }}
+        run: |
+          set -eu
+
+          if [ "${GITHUB_REF_TYPE:-}" != "tag" ]; then
+            echo "release must run from a tag ref; got ${GITHUB_REF_TYPE:-unknown}" >&2
+            exit 1
+          fi
+
+          version="$(sh -c "$VERSION_COMMAND" | tail -n 1 | tr -d '[:space:]')"
+          if [ -z "$version" ]; then
+            echo "version-command did not print a version" >&2
+            exit 1
+          fi
+
+          expected_tag="${TAG_PREFIX}${version}"
+          if [ "${GITHUB_REF_NAME:-}" != "$expected_tag" ]; then
+            echo "release tag mismatch: expected ${expected_tag}, got ${GITHUB_REF_NAME:-unknown}" >&2
+            exit 1
+          fi
+
+          if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-((pre|alpha|beta|rc)\.[0-9]+))?$'; then
+            echo "version is not on a supported release train: ${version}" >&2
+            exit 1
+          fi
+
+          prerelease=false
+          case "$version" in
+            *-*) prerelease=true ;;
+          esac
+
+          echo "validated ${GITHUB_REF_NAME} -> ${version} (prerelease=${prerelease})"
+          {
+            echo "version=${version}"
+            echo "prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare image tags
+        id: image-meta
+        env:
+          EXTRA_TAGS: ${{ inputs.extra-tags }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          PRERELEASE: ${{ steps.release-meta.outputs.prerelease }}
+          PUSH_LATEST: ${{ inputs.push-latest }}
+          VERSION: ${{ steps.release-meta.outputs.version }}
+        run: |
+          set -eu
+
+          tags_file="$RUNNER_TEMP/elixir-release-image-tags.txt"
+          : > "$tags_file"
+          printf '%s\n' "${IMAGE_NAME}:${VERSION}" >> "$tags_file"
+          if [ "$PUSH_LATEST" = "true" ] && [ "$PRERELEASE" = "false" ]; then
+            printf '%s\n' "${IMAGE_NAME}:latest" >> "$tags_file"
+          fi
+          if [ -n "$EXTRA_TAGS" ]; then
+            printf '%s\n' "$EXTRA_TAGS" | sed '/^[[:space:]]*$/d' >> "$tags_file"
+          fi
+
+          {
+            echo "image=${IMAGE_NAME}"
+            echo "tags<<EOF"
+            cat "$tags_file"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report Elixir release policy
+        env:
+          APP_NAME: ${{ inputs.app-name }}
+          BEAM_MODE: ${{ inputs.beam-mode }}
+          DEPS_COMMAND: ${{ inputs.deps-command }}
+          DOCKER_CONTEXT: ${{ inputs.docker-context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          ELIXIR_VERSION: ${{ inputs.elixir-version }}
+          IMAGE_NAME: ${{ steps.image-meta.outputs.image }}
+          OTP_VERSION: ${{ inputs.otp-version }}
+          PLATFORMS: ${{ inputs.platforms }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+          VERSION: ${{ steps.release-meta.outputs.version }}
+        run: |
+          set -eu
+
+          report="$RUNNER_TEMP/elixir-release-policy.txt"
+          {
+            echo "Elixir release policy:"
+            echo "- app_name: ${APP_NAME}"
+            echo "- runner: ${RUNNER_NAME:-unknown}"
+            echo "- runner_os: ${RUNNER_OS}"
+            echo "- runner_arch: ${RUNNER_ARCH}"
+            echo "- otp_version: ${OTP_VERSION}"
+            echo "- elixir_version: ${ELIXIR_VERSION}"
+            echo "- beam_mode: ${BEAM_MODE}"
+            echo "- deps_command: ${DEPS_COMMAND}"
+            echo "- tag_prefix: ${TAG_PREFIX}"
+            echo "- version: ${VERSION}"
+            echo "- image_name: ${IMAGE_NAME}"
+            echo "- docker_context: ${DOCKER_CONTEXT}"
+            echo "- dockerfile: ${DOCKERFILE}"
+            echo "- platforms: ${PLATFORMS}"
+          } | tee "$report"
+
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## Elixir release policy"
+              echo
+              echo '```text'
+              cat "$report"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  push-image:
+    name: Push Elixir Image
+    needs: validate
+    if: inputs.push-image
+    runs-on: ${{ inputs.image-runner }}
+    outputs:
+      image: ${{ needs.validate.outputs.image }}
+      image-tags: ${{ needs.validate.outputs.image-tags }}
+      image-digest: ${{ steps.image-digest.outputs.image-digest }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.docker-context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ needs.validate.outputs.image-tags }}
+          build-args: ${{ inputs.build-args }}
+          target: ${{ inputs.target }}
+
+      - name: Report image digest
+        id: image-digest
+        run: |
+          set -eu
+          echo 'image-digest=${{ steps.build.outputs.digest }}' >> "$GITHUB_OUTPUT"
+
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## Elixir image"
+              echo
+              echo "- image: ${{ needs.validate.outputs.image }}"
+              echo "- digest: ${{ steps.build.outputs.digest }}"
+              echo
+              echo "Tags:"
+              echo
+              echo '```text'
+              printf '%s\n' "${{ needs.validate.outputs.image-tags }}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, push-image]
+    if: ${{ always() && inputs.publish-github-release && needs.validate.result == 'success' && (!inputs.push-image || needs.push-image.result == 'success') }}
+    runs-on: ${{ inputs.publish-runner }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          prerelease: ${{ needs.validate.outputs.prerelease }}
+          generate_release_notes: true

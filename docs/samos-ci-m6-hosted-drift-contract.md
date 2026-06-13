@@ -61,6 +61,7 @@ Reusable workflow hosted defaults remain intentional compatibility surface:
 - `ci-opentofu.yml`
 - `ci-rust.yml`
 - `ci-typescript-bun.yml`
+- `release-elixir.yml`
 - `release-rust.yml`
 
 `deploy-compose.yml` is Puck-only and is not a hosted-default workflow.
