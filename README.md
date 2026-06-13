@@ -232,6 +232,10 @@ Common overrides:
 - `extra-tags`
 - `publish-github-release`
 
+The default `version-command` reads `mix.exs` metadata without loading
+`config/runtime.exs`, so Phoenix apps do not need deployment-only environment
+variables such as `DATABASE_URL` merely to validate a release tag.
+
 Trusted self-hosted callers can set `beam-mode: runner-preinstalled` when the
 runner image owns the requested BEAM version. Service repos should keep only a
 thin release caller and app-owned Dockerfile/release scripts; shared release

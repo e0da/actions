@@ -50,7 +50,7 @@ on:
         description: "Command that prints the Mix project version."
         required: false
         type: string
-        default: "mix run --no-start -e \"Mix.Project.config() |> Keyword.fetch!(:version) |> IO.puts()\""
+        default: "elixir -e 'Mix.start(); Code.require_file(\"mix.exs\"); Mix.Project.config() |> Keyword.fetch!(:version) |> IO.puts()'"
       tag-prefix:
         description: "Git tag prefix prepended to the Mix project version."
         required: false
@@ -240,7 +240,14 @@ jobs:
             exit 1
           fi
 
-          version="$(sh -c "$VERSION_COMMAND" | tail -n 1 | tr -d '[:space:]')"
+          version_output="$RUNNER_TEMP/elixir-release-version.txt"
+          if ! sh -c "$VERSION_COMMAND" > "$version_output" 2>&1; then
+            cat "$version_output" >&2
+            echo "version-command failed" >&2
+            exit 1
+          fi
+
+          version="$(tail -n 1 "$version_output" | tr -d '[:space:]')"
           if [ -z "$version" ]; then
             echo "version-command did not print a version" >&2
             exit 1
