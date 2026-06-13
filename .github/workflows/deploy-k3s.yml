@@ -1,0 +1,293 @@
+name: Deploy k3s Service
+
+# Reusable workflow that deploys an e0da/stack service to the puck k3s cluster.
+# Peer of deploy-compose.yml: deploy-compose.yml stays for genuinely
+# compose-only services (ADR-016 archetypes A/C/D); this workflow is the
+# k3s-native deploy path for services that run as a k3s Deployment in the
+# ops-services namespace (mcog, oracle, ...).
+#
+# Runs IN the cluster on the per-service ARC linux runner scale set, so the
+# deploy is co-located with the k3s API it targets. The runner pod is
+# token-less by policy (infra/puck/k3s-arc/runner-namespace.yaml: arc-runner SA,
+# automountServiceAccountToken: false, enforced by ops/bin/puck-k3s-arc), so
+# this workflow does NOT rely on a mounted pod token. Instead it builds an
+# ephemeral kubeconfig at job-time from the `arc_deployer_token` secret — the
+# bound token of the `arc-deployer` ServiceAccount (RBAC scoped to ops-services
+# only; see ops/infra/puck/k3s-arc/arc-deployer.yaml). This mirrors the
+# ephemeral-credential pattern in deploy-compose.yml (the ephemeral DOCKER_CONFIG
+# built from GITHUB_TOKEN), and keeps the CI runner SA token-less.
+#
+# Scope, by design: this workflow ONLY rolls a new image digest onto an existing
+# Deployment — `set image` + `rollout status` (+ `rollout undo` on failure). It
+# does NOT `kubectl apply` the full stack manifest. The Namespace / Service /
+# PVCs (and the initial Deployment) are stable infra provisioned out-of-band at
+# setup time (see stack/<svc>/k8s/README.md). Reconciling them on every deploy
+# would require cluster-wide (Namespace) and cross-resource (PVC/Service) RBAC,
+# which directly violates the arc-deployer least-privilege scope
+# (ops-services Deployments only). Keeping CD to digest-roll-only is both the
+# least-privilege boundary and the reproducibility win.
+#
+# Deploys the PINNED image DIGEST (image input must be @sha256:<digest>), not a
+# floating :tag, so `rollout undo` is a real rollback and a `rollout restart`
+# never pulls an unknown image. A GHCR digest existence-check runs BEFORE any
+# cluster mutation and fails loud — deploying a tag/digest that was never built
+# is the footgun this guard closes. On rollout failure the deploy is rolled back
+# automatically (`rollout undo`) and the job exits non-zero: no silent partial
+# deploy.
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Service name; matches the k3s Deployment/container name (e.g. mcog, oracle)."
+        required: true
+        type: string
+      runner:
+        description: "ARC scale-set runner that runs in-cluster (e.g. mcog-linux-arm64). Must have kube-API reachability to the puck cluster."
+        required: true
+        type: string
+      image:
+        description: "Fully-qualified PINNED image reference to deploy: ghcr.io/e0da/<svc>@sha256:<digest>. Must be a digest, not a floating tag."
+        required: true
+        type: string
+      namespace:
+        description: "k8s namespace of the Deployment."
+        required: false
+        type: string
+        default: ops-services
+      deployment:
+        description: "Deployment name to patch (defaults to the service name)."
+        required: false
+        type: string
+        default: ""
+      container:
+        description: "Container name within the Deployment to set the image on (defaults to the service name)."
+        required: false
+        type: string
+        default: ""
+      wait-timeout:
+        description: "rollout status timeout (kubectl duration, e.g. 120s)."
+        required: false
+        type: string
+        default: 120s
+    secrets:
+      arc_deployer_token:
+        description: "Bearer token for the arc-deployer ServiceAccount (RBAC scoped to ops-services). Used to build an ephemeral kubeconfig."
+        required: true
+      arc_deployer_ca_cert:
+        description: "Base64-encoded cluster CA cert (the arc-deployer-token Secret's .data['ca.crt'], already base64). Written to the ephemeral kubeconfig dir; the runner pod is token-less so the in-pod SA ca.crt path is NOT mounted."
+        required: true
+
+  # Manual trigger for a live smoke validation of the deploy path. The k3s CD
+  # foundation has NEVER had a live rollout exercised end-to-end, so this entry
+  # exists to drive a one-off real deploy (an existing Deployment, re-rolling
+  # its current digest) before any caller wires this workflow into the incident
+  # path. Reads ARC_DEPLOYER_TOKEN / ARC_DEPLOYER_CA_CERT from repo secrets.
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service name; matches the k3s Deployment/container name (e.g. mcog, oracle)."
+        required: true
+        type: string
+      runner:
+        description: "ARC scale-set runner that runs in-cluster (e.g. mcog-linux-arm64). Must reach the puck kube-API."
+        required: true
+        type: string
+      image:
+        description: "PINNED image to deploy: ghcr.io/e0da/<svc>@sha256:<digest>. Must be a digest, not a floating tag."
+        required: true
+        type: string
+      namespace:
+        description: "k8s namespace of the Deployment."
+        required: false
+        type: string
+        default: ops-services
+      deployment:
+        description: "Deployment name to patch (defaults to the service name)."
+        required: false
+        type: string
+        default: ""
+      container:
+        description: "Container name within the Deployment to set the image on (defaults to the service name)."
+        required: false
+        type: string
+        default: ""
+      wait-timeout:
+        description: "rollout status timeout (kubectl duration, e.g. 120s)."
+        required: false
+        type: string
+        default: 120s
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.service }} to k3s
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      packages: read
+
+    env:
+      SVC: ${{ inputs.service }}
+      NS: ${{ inputs.namespace }}
+      IMAGE: ${{ inputs.image }}
+      WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+      # API endpoint reachable from inside the cluster (any pod can reach the
+      # kubernetes service ClusterIP). The runner pod lives in-cluster, so this
+      # is the correct server URL — NOT the host port-forward (127.0.0.1:16443),
+      # which is only reachable from the macOS host.
+      KUBE_API: https://kubernetes.default.svc
+
+    steps:
+      - name: Resolve names and validate digest (fail loud)
+        shell: bash
+        run: |
+          set -euo pipefail
+          deploy="${{ inputs.deployment }}"; [[ -n "${deploy}" ]] || deploy="${SVC}"
+          ctr="${{ inputs.container }}"; [[ -n "${ctr}" ]] || ctr="${SVC}"
+          echo "DEPLOYMENT=${deploy}" >> "$GITHUB_ENV"
+          echo "CONTAINER=${ctr}" >> "$GITHUB_ENV"
+          # The whole point of digest-pinning is reproducibility + real rollback.
+          # A floating :tag (or empty/short digest) would silently defeat both,
+          # so require a fully-formed sha256 digest under the e0da GHCR owner:
+          #   - @sha256: followed by EXACTLY 64 lowercase hex chars (rejects
+          #     empty/truncated/uppercase digests the loose *@sha256:* glob let
+          #     through), and
+          #   - the ghcr.io/e0da/ owner prefix (refuse images from any other
+          #     registry/owner — this CD only deploys our own builds).
+          if [[ ! "${IMAGE}" =~ ^ghcr\.io/e0da/[^@]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::image must be a pinned e0da digest (ghcr.io/e0da/${SVC}@sha256:<64-hex>), got: ${IMAGE}" >&2
+            exit 1
+          fi
+
+      - name: GHCR digest existence check (fail loud)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Refuse to deploy an image that was never built/pushed. This is the
+          # "deploy a tag whose image isn't built yet" guard. Resolve the digest
+          # against the GHCR registry manifest API before touching the cluster.
+          repo="${IMAGE%@*}"          # ghcr.io/e0da/<svc>
+          digest="${IMAGE#*@}"        # sha256:<hex>
+          path="${repo#ghcr.io/}"     # e0da/<svc>
+          token="$(printf '%s' "${GH_TOKEN}" | base64)"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+            -H "Accept: application/vnd.oci.image.index.v1+json" \
+            -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+            "https://ghcr.io/v2/${path}/manifests/${digest}")"
+          if [[ "${status}" != "200" ]]; then
+            echo "::error::image digest not found in GHCR (HTTP ${status}): ${IMAGE}. Was it built and pushed?" >&2
+            exit 1
+          fi
+          echo "GHCR digest present: ${IMAGE}"
+
+      - name: Build ephemeral kubeconfig
+        id: kubeconfig
+        shell: bash
+        env:
+          ARC_DEPLOYER_TOKEN: ${{ secrets.arc_deployer_token }}
+          ARC_DEPLOYER_CA_CERT: ${{ secrets.arc_deployer_ca_cert }}
+        run: |
+          set -euo pipefail
+          # Ephemeral, job-scoped kubeconfig built from the arc-deployer SA token.
+          # Mirrors deploy-compose.yml's ephemeral DOCKER_CONFIG: never persisted,
+          # removed by the cleanup step on exit. The SA's RBAC (Role in
+          # ops-services) is what bounds blast radius, not this file.
+          dir="$(mktemp -d -t kubeconfig-XXXX)"
+          kc="${dir}/config"
+          ca="${dir}/ca.crt"
+          # The runner pod sets automountServiceAccountToken: false, so the
+          # in-pod SA path /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          # is NOT mounted — pointing certificate-authority at it makes the very
+          # first kubectl fail. Instead decode the cluster CA delivered as a
+          # secret (the arc-deployer-token Secret's already-base64 .data['ca.crt'])
+          # and point the kubeconfig at THIS file. base64 -d via heredoc keeps the
+          # value out of the process table and logs; no insecure-skip-tls-verify.
+          base64 -d > "${ca}" <<EOF
+          ${ARC_DEPLOYER_CA_CERT}
+          EOF
+          if [[ ! -s "${ca}" ]]; then
+            echo "::error::arc_deployer_ca_cert decoded to empty CA; refusing to deploy without server cert verification" >&2
+            exit 1
+          fi
+          chmod 600 "${ca}"
+          cat > "${kc}" <<YAML
+          apiVersion: v1
+          kind: Config
+          clusters:
+            - name: puck-k3s
+              cluster:
+                server: ${KUBE_API}
+                certificate-authority: ${ca}
+          users:
+            - name: arc-deployer
+              user:
+                token: ${ARC_DEPLOYER_TOKEN}
+          contexts:
+            - name: deploy
+              context:
+                cluster: puck-k3s
+                user: arc-deployer
+                namespace: ${NS}
+          current-context: deploy
+          YAML
+          chmod 600 "${kc}"
+          echo "path=${kc}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy pinned digest
+        shell: bash
+        env:
+          KUBECONFIG: ${{ steps.kubeconfig.outputs.path }}
+        run: |
+          set -euo pipefail
+          # Pin the exact digest. `set image` records the prior digest in the
+          # previous ReplicaSet, so `rollout undo` is a true rollback.
+          kubectl -n "${NS}" set image "deploy/${DEPLOYMENT}" "${CONTAINER}=${IMAGE}"
+
+      - name: Wait for rollout (health-gated)
+        id: rollout
+        shell: bash
+        env:
+          KUBECONFIG: ${{ steps.kubeconfig.outputs.path }}
+        run: |
+          set -euo pipefail
+          # Blocks on the Deployment's existing probes; non-zero on timeout.
+          kubectl -n "${NS}" rollout status "deploy/${DEPLOYMENT}" --timeout="${WAIT_TIMEOUT}"
+
+      - name: Roll back on failure (fail loud)
+        if: failure() && steps.rollout.outcome == 'failure'
+        shell: bash
+        env:
+          KUBECONFIG: ${{ steps.kubeconfig.outputs.path }}
+        run: |
+          set -euo pipefail
+          # The rollout did not become healthy. Restore the previous ReplicaSet
+          # (the prior pinned digest) and wait for it, so the cluster is never
+          # left half-deployed. The job still exits non-zero overall.
+          echo "::error::rollout of ${DEPLOYMENT} failed; rolling back" >&2
+          kubectl -n "${NS}" rollout undo "deploy/${DEPLOYMENT}"
+          kubectl -n "${NS}" rollout status "deploy/${DEPLOYMENT}" --timeout="${WAIT_TIMEOUT}"
+
+      - name: Cleanup ephemeral kubeconfig
+        if: always() && steps.kubeconfig.outputs.path != ''
+        shell: bash
+        run: |
+          rm -rf "$(dirname "${{ steps.kubeconfig.outputs.path }}")" || true
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Deploy k3s: ${SVC}"
+            echo ""
+            echo "- namespace: \`${NS}\`"
+            echo "- deployment: \`${DEPLOYMENT:-$SVC}\`"
+            echo "- container: \`${CONTAINER:-$SVC}\`"
+            echo "- image (pinned): \`${IMAGE}\`"
+            echo "- rollout: ${{ steps.rollout.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
