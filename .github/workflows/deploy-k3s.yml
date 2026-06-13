@@ -242,6 +242,25 @@ jobs:
           chmod 600 "${kc}"
           echo "path=${kc}" >> "$GITHUB_OUTPUT"
 
+      - name: Install kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The ARC runner image has no kubectl; fetch a pinned-channel client to
+          # RUNNER_TEMP (no sudo) and add it to PATH for the deploy steps below.
+          case "$(uname -m)" in
+            aarch64|arm64) ARCH=arm64 ;;
+            x86_64|amd64)  ARCH=amd64 ;;
+            *) echo "::error::unsupported arch $(uname -m) for kubectl install"; exit 1 ;;
+          esac
+          KVER="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/kubectl" \
+            "https://dl.k8s.io/release/${KVER}/bin/linux/${ARCH}/kubectl"
+          chmod +x "$RUNNER_TEMP/bin/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/kubectl" version --client
+
       - name: Deploy pinned digest
         shell: bash
         env:
