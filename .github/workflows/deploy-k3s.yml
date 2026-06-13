@@ -171,7 +171,11 @@ jobs:
           repo="${IMAGE%@*}"          # ghcr.io/e0da/<svc>
           digest="${IMAGE#*@}"        # sha256:<hex>
           path="${repo#ghcr.io/}"     # e0da/<svc>
-          token="$(printf '%s' "${GH_TOKEN}" | base64)"
+          # base64 wraps at 76 columns by default; a multi-line value here
+          # corrupts the `Authorization: Bearer` header into a malformed
+          # multi-line header and curl fails to send the request entirely
+          # (curl: (43) Failed sending HTTP request). Strip the wrap newlines.
+          token="$(printf '%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
           status="$(curl -sS -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer ${token}" \
             -H "Accept: application/vnd.oci.image.manifest.v1+json" \
