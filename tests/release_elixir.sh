@@ -54,7 +54,9 @@ require_literal "$workflow" '      image-tags:'
 require_literal "$workflow" '      image-digest:'
 
 require_literal "$workflow" "case \"\$BEAM_MODE\" in"
-require_literal "$workflow" "mix run --no-start"
+require_literal "$workflow" "Code.require_file(\\\"mix.exs\\\")"
+require_literal "$workflow" "version_output=\"\$RUNNER_TEMP/elixir-release-version.txt\""
+require_literal "$workflow" "version-command failed"
 require_literal "$workflow" "expected_tag=\"\${TAG_PREFIX}\${version}\""
 require_literal "$workflow" "PRERELEASE: \${{ steps.release-meta.outputs.prerelease }}"
 require_literal "$workflow" "if [ \"\$PUSH_LATEST\" = \"true\" ] && [ \"\$PRERELEASE\" = \"false\" ]; then"
