@@ -38,6 +38,10 @@ on:
         required: false
         type: string
         default: setup-beam
+    secrets:
+      private_deps_ssh_key:
+        description: "Optional SSH private key for fetching private cross-repo git deps. When unset, the SSH-config step is skipped and behavior is unchanged."
+        required: false
 
 jobs:
   mix:
@@ -47,6 +51,7 @@ jobs:
       contents: read
     env:
       MIX_ENV: test
+      PRIVATE_DEPS_SSH_KEY: ${{ secrets.private_deps_ssh_key }}
     steps:
       - name: Validate policy modes
         env:
@@ -158,6 +163,18 @@ jobs:
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Configure private git deps (SSH)
+        if: ${{ env.PRIVATE_DEPS_SSH_KEY != '' }}
+        env:
+          SSH_KEY: ${{ secrets.private_deps_ssh_key }}
+        run: |
+          set -eu
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/private_deps
+          chmod 600 ~/.ssh/private_deps
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host github.com\n  IdentityFile ~/.ssh/private_deps\n  IdentitiesOnly yes\n' >> ~/.ssh/config
 
       - name: Install deps
         run: ${{ inputs.deps-command }}
