@@ -77,6 +77,9 @@ on:
       arc_deployer_ca_cert:
         description: "Base64-encoded cluster CA cert (the arc-deployer-token Secret's .data['ca.crt'], already base64). Written to the ephemeral kubeconfig dir; the runner pod is token-less so the in-pod SA ca.crt path is NOT mounted."
         required: true
+      GHCR_TOKEN:
+        description: "Optional token for GHCR reads; defaults to GITHUB_TOKEN when omitted."
+        required: false
 
   # Manual trigger for a live smoke validation of the deploy path. The k3s CD
   # foundation has NEVER had a live rollout exercised end-to-end, so this entry
@@ -162,7 +165,8 @@ jobs:
       - name: GHCR digest existence check (fail loud)
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GHCR_TOKEN || github.token }}
+          GH_USER: ${{ github.actor }}
         run: |
           set -euo pipefail
           # Refuse to deploy an image that was never built/pushed. This is the
@@ -171,22 +175,33 @@ jobs:
           repo="${IMAGE%@*}"          # ghcr.io/e0da/<svc>
           digest="${IMAGE#*@}"        # sha256:<hex>
           path="${repo#ghcr.io/}"     # e0da/<svc>
-          # base64 wraps at 76 columns by default; a multi-line value here
-          # corrupts the `Authorization: Bearer` header into a malformed
-          # multi-line header and curl fails to send the request entirely
-          # (curl: (43) Failed sending HTTP request). Strip the wrap newlines.
-          token="$(printf '%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
+          # GHCR's registry API accepts Docker-style Basic auth. Build the same
+          # username:token credential shape used by deploy-compose's ephemeral
+          # Docker config; strip base64 wrapping because this runs on Linux ARC.
+          auth_b64="$(printf '%s:%s' "${GH_USER}" "${GH_TOKEN}" | base64 | tr -d '\n')"
           status="$(curl -sS -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer ${token}" \
+            -H "Authorization: Basic ${auth_b64}" \
             -H "Accept: application/vnd.oci.image.manifest.v1+json" \
             -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
             -H "Accept: application/vnd.oci.image.index.v1+json" \
             -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
             "https://ghcr.io/v2/${path}/manifests/${digest}")"
-          if [[ "${status}" != "200" ]]; then
-            echo "::error::image digest not found in GHCR (HTTP ${status}): ${IMAGE}. Was it built and pushed?" >&2
-            exit 1
-          fi
+          case "${status}" in
+            200)
+              ;;
+            401|403)
+              echo "::error::GHCR digest check could not authenticate (HTTP ${status}): ${IMAGE}. Configure GHCR_TOKEN with read:packages for this repository, or call this workflow from a repository token that can read the package." >&2
+              exit 1
+              ;;
+            404)
+              echo "::error::image digest not found in GHCR (HTTP ${status}): ${IMAGE}. Was it built and pushed?" >&2
+              exit 1
+              ;;
+            *)
+              echo "::error::GHCR digest check failed (HTTP ${status}): ${IMAGE}" >&2
+              exit 1
+              ;;
+          esac
           echo "GHCR digest present: ${IMAGE}"
 
       - name: Build ephemeral kubeconfig
