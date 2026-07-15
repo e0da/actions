@@ -660,6 +660,7 @@ jobs:
       - name: Check links
         id: link_check_linux_install
         if: runner.os == 'Linux' && inputs['tool-mode'] == 'workflow-install'
+        continue-on-error: true
         uses: lycheeverse/lychee-action@v2
         with:
           args: ${{ inputs['link-args'] }}
@@ -670,6 +671,7 @@ jobs:
       - name: Check links with preinstalled lychee
         id: link_check_linux_preinstalled
         if: runner.os == 'Linux' && inputs['tool-mode'] == 'runner-preinstalled'
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LYCHEE_ARGS: ${{ inputs['link-args'] }}
@@ -692,6 +694,7 @@ jobs:
       - name: Check links
         id: link_check_macos
         if: runner.os == 'macOS'
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LYCHEE_ARGS: ${{ inputs['link-args'] }}
@@ -868,11 +871,11 @@ jobs:
             normalize_status "${SECRET_SCAN_OUTCOME:-}"
           }
 
-          link_status() {
+          remote_link_status() {
             for outcome in "${LINK_LINUX_INSTALL_OUTCOME:-}" "${LINK_LINUX_PREINSTALLED_OUTCOME:-}" "${LINK_MACOS_OUTCOME:-}"; do
               case "$outcome" in
                 failure|cancelled)
-                  printf 'fail\n'
+                  printf 'fail (blocking)\n'
                   return
                   ;;
                 success)
@@ -895,9 +898,32 @@ jobs:
               echo "| Hosted drift | $(normalize_status "${HOSTED_DRIFT_OUTCOME:-}") |"
               echo "| PR title | $(normalize_status "${PR_TITLE_OUTCOME:-}") |"
               echo "| Secret scan | $(secret_scan_status) |"
-              echo "| Broken links | $(link_status) |"
+              echo "| Broken links | $(remote_link_status) |"
               echo "| Frontmatter | $(normalize_status "${FRONTMATTER_OUTCOME:-}") |"
               echo "| Jekyll build | $(normalize_status "${BUILD_OUTCOME:-}") |"
               echo "| IA test | $(normalize_status "${TEST_OUTCOME:-}") |"
+
+              if [ "$(remote_link_status)" = "fail (blocking)" ]; then
+                echo
+                echo "> Owner/action: the wiki link steward rechecks the remote result; the Actions maintainer owns verifier or runner failure."
+              fi
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Enforce remote link result
+        if: always()
+        env:
+          LINK_LINUX_INSTALL_OUTCOME: ${{ steps.link_check_linux_install.outcome }}
+          LINK_LINUX_PREINSTALLED_OUTCOME: ${{ steps.link_check_linux_preinstalled.outcome }}
+          LINK_MACOS_OUTCOME: ${{ steps.link_check_macos.outcome }}
+        run: |
+          set -eu
+
+          for outcome in "${LINK_LINUX_INSTALL_OUTCOME:-}" "${LINK_LINUX_PREINSTALLED_OUTCOME:-}" "${LINK_MACOS_OUTCOME:-}"; do
+            case "$outcome" in
+              failure|cancelled)
+                echo "::error::Remote link verification failed. Repair the affected URL or recheck it with successful remote-verifier evidence."
+                exit 1
+                ;;
+            esac
+          done

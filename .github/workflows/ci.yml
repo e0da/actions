@@ -78,3 +78,6 @@ jobs:
           sh tests/release_elixir.sh
           sh tests/release_homebrew_interface.sh
           sh tests/unity_ci_contract.sh
+          sh tests/wiki_bundled_ci_contract.sh
+          sh tests/wiki_bundled_hosted_drift.sh
+          sh tests/wiki_bundled_link_evidence.sh
