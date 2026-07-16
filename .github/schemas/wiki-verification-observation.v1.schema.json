@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/e0da/actions/schemas/wiki-verification-observation.v1.schema.json",
+  "title": "Wiki verification observation v1",
+  "description": "A fact-only observation from one Wiki verification check.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "observation_version",
+    "check_id",
+    "tested_commit",
+    "tested_tree",
+    "comparison_commit",
+    "comparison_tree",
+    "observed_state",
+    "availability",
+    "evidence_ref"
+  ],
+  "properties": {
+    "observation_version": {
+      "const": "wiki-verification-observation.v1"
+    },
+    "check_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "tested_commit": {
+      "$ref": "#/$defs/gitObjectId"
+    },
+    "tested_tree": {
+      "$ref": "#/$defs/gitObjectId"
+    },
+    "comparison_commit": {
+      "anyOf": [
+        { "$ref": "#/$defs/gitObjectId" },
+        { "type": "null" }
+      ]
+    },
+    "comparison_tree": {
+      "anyOf": [
+        { "$ref": "#/$defs/gitObjectId" },
+        { "type": "null" }
+      ]
+    },
+    "observed_state": {
+      "enum": ["satisfied", "violated", "not_evaluated"]
+    },
+    "availability": {
+      "enum": ["available", "partial", "unavailable"]
+    },
+    "attribution": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reader_impact": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "evidence_ref": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    }
+  }
+}

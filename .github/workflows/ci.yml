@@ -81,3 +81,4 @@ jobs:
           sh tests/wiki_bundled_ci_contract.sh
           sh tests/wiki_bundled_hosted_drift.sh
           sh tests/wiki_bundled_link_evidence.sh
+          sh tests/wiki_verification_minimal_contract.sh
