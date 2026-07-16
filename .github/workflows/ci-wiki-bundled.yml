@@ -75,6 +75,31 @@ on:
         required: false
         type: boolean
         default: true
+      result-contract-mode:
+        description: "Result contract mode. Legacy and observe preserve existing Wiki step consequences; enforce makes the verification contract gate authoritative."
+        required: false
+        type: string
+        default: legacy
+      verification-target:
+        description: "Policy target: merge or deploy-preflight."
+        required: false
+        type: string
+        default: merge
+      result-policy-path:
+        description: "Path to the caller-owned verification policy."
+        required: false
+        type: string
+        default: .github/wiki-verification-policy.json
+    outputs:
+      result-contract-version:
+        description: "Minimal result contract version. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['result-contract-version'] }}
+      result-target:
+        description: "Verification target. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['result-target'] }}
+      result-conclusion:
+        description: "Policy-applied conclusion. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['result-conclusion'] }}
 
 jobs:
   wiki-ci:
@@ -85,10 +110,16 @@ jobs:
       pull-requests: read
       issues: read
       statuses: write
+    outputs:
+      result-contract-version: ${{ steps.verification_contract.outputs['result-contract-version'] }}
+      result-target: ${{ steps.verification_contract.outputs['result-target'] }}
+      result-conclusion: ${{ steps.verification_contract.outputs['result-conclusion'] }}
     env:
       JEKYLL_ENV: production
     steps:
       - name: Add runner-local tools to PATH
+        id: runner_tools
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         run: |
           set -eu
 
@@ -97,6 +128,8 @@ jobs:
           fi
 
       - name: Validate runner contract
+        id: runner_contract
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         env:
           RUNNER_PROFILE: ${{ inputs['runner-profile'] }}
           RUNNER_CAPABILITIES: ${{ inputs['runner-capabilities'] }}
@@ -249,10 +282,14 @@ jobs:
           echo "Runner contract OK: profile='${RUNNER_PROFILE:-<none>}' capabilities='${RUNNER_CAPABILITIES:-<none>}' tool-mode='${TOOL_MODE}' os='${OBSERVED_RUNNER_OS}' arch='${OBSERVED_RUNNER_ARCH}'."
 
       - uses: actions/checkout@v5
+        id: checkout
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         with:
           fetch-depth: 0
 
       - name: Ensure GitHub CLI
+        id: github_cli
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         shell: sh
         env:
           GH_CLI_VERSION: "2.93.0"
@@ -315,6 +352,7 @@ jobs:
       - name: Approval report
         id: approval_report
         if: ${{ inputs['approval-report'] && github.event_name == 'pull_request' }}
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -435,6 +473,7 @@ jobs:
       - name: Check PR title
         id: pr_title
         if: ${{ github.event_name == 'pull_request' }}
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -461,6 +500,7 @@ jobs:
 
       - name: Scan workflow runner routing
         id: hosted_drift
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         env:
           MODE: ${{ inputs['hosted-drift-mode'] }}
           ALLOWLIST_PATH: ${{ inputs['hosted-drift-allowlist-path'] }}
@@ -613,6 +653,8 @@ jobs:
           fi
 
       - name: Install Gitleaks CLI
+        id: gitleaks_install
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         env:
           GITLEAKS_VERSION: 8.30.1
         run: |
@@ -678,7 +720,9 @@ jobs:
         run: bash -lc "lychee ${LYCHEE_ARGS}"
 
       - name: Install lychee
+        id: lychee_install_macos
         if: runner.os == 'macOS' && inputs['tool-mode'] == 'workflow-install'
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         run: |
           if command -v lychee >/dev/null 2>&1; then
             exit 0
@@ -701,14 +745,18 @@ jobs:
         run: bash -lc "lychee ${LYCHEE_ARGS}"
 
       - name: Set up Ruby
+        id: ruby_setup_linux
         if: runner.os != 'macOS'
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ inputs['ruby-version'] }}
           bundler-cache: true
 
       - name: Set up Ruby
+        id: ruby_setup_macos
         if: runner.os == 'macOS'
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         env:
           RUBY_VERSION: ${{ inputs['ruby-version'] }}
         run: |
@@ -740,6 +788,7 @@ jobs:
 
       - name: Validate YAML frontmatter in .md files
         id: frontmatter
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         run: |
           ruby <<'RB'
           require "date"
@@ -773,6 +822,8 @@ jobs:
           RB
 
       - name: Install ripgrep
+        id: ripgrep_install
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         run: |
           if ! command -v rg >/dev/null 2>&1; then
             sudo_cmd=""
@@ -808,12 +859,14 @@ jobs:
 
       - name: Build
         id: build
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         env:
           BUILD_COMMAND: ${{ inputs['build-command'] }}
         run: bash -c "$BUILD_COMMAND"
 
       - name: Test
         id: wiki_test
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         env:
           TEST_COMMAND: ${{ inputs['test-command'] }}
         run: |
@@ -825,7 +878,9 @@ jobs:
           bash -c "$TEST_COMMAND"
 
       - name: Write check summary
+        id: check_summary
         if: always()
+        continue-on-error: ${{ inputs['result-contract-mode'] == 'enforce' }}
         env:
           APPROVAL_OUTCOME: ${{ steps.approval_report.outcome }}
           APPROVAL_SIGNAL: ${{ steps.approval_report.outputs.signal }}
@@ -910,8 +965,587 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Collect verification contract
+        id: verification_contract
+        if: always() && inputs['result-contract-mode'] != 'legacy'
+        continue-on-error: true
+        shell: sh
+        env:
+          RESULT_CONTRACT_MODE: ${{ inputs['result-contract-mode'] }}
+          VERIFICATION_TARGET: ${{ inputs['verification-target'] }}
+          RESULT_POLICY_PATH: ${{ inputs['result-policy-path'] }}
+          RESULT_RECORDS_DIR: .wiki-verification/observations
+          RESULT_OUTPUT_PATH: ${{ runner.temp }}/wiki-verification-minimal.jsonl
+          TESTED_COMMIT: ${{ github.sha }}
+          TESTED_TREE: ""
+          LEGACY_CONCLUSION: ${{ (steps.link_check_linux_install.outcome == 'failure' || steps.link_check_linux_install.outcome == 'cancelled' || steps.link_check_linux_preinstalled.outcome == 'failure' || steps.link_check_linux_preinstalled.outcome == 'cancelled' || steps.link_check_macos.outcome == 'failure' || steps.link_check_macos.outcome == 'cancelled') && 'fail' || 'pass' }}
+          LEGACY_JOB_STATUS: ${{ job.status }}
+          LEGACY_RUNNER_TOOLS_OUTCOME: ${{ steps.runner_tools.outcome }}
+          LEGACY_RUNNER_CONTRACT_OUTCOME: ${{ steps.runner_contract.outcome }}
+          LEGACY_CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          LEGACY_GITHUB_CLI_OUTCOME: ${{ steps.github_cli.outcome }}
+          LEGACY_APPROVAL_REPORT_OUTCOME: ${{ steps.approval_report.outcome }}
+          LEGACY_PR_TITLE_OUTCOME: ${{ steps.pr_title.outcome }}
+          LEGACY_HOSTED_DRIFT_OUTCOME: ${{ steps.hosted_drift.outcome }}
+          LEGACY_GITLEAKS_INSTALL_OUTCOME: ${{ steps.gitleaks_install.outcome }}
+          LEGACY_LYCHEE_INSTALL_MACOS_OUTCOME: ${{ steps.lychee_install_macos.outcome }}
+          LEGACY_RUBY_SETUP_LINUX_OUTCOME: ${{ steps.ruby_setup_linux.outcome }}
+          LEGACY_RUBY_SETUP_MACOS_OUTCOME: ${{ steps.ruby_setup_macos.outcome }}
+          LEGACY_FRONTMATTER_OUTCOME: ${{ steps.frontmatter.outcome }}
+          LEGACY_RIPGREP_INSTALL_OUTCOME: ${{ steps.ripgrep_install.outcome }}
+          LEGACY_BUILD_OUTCOME: ${{ steps.build.outcome }}
+          LEGACY_WIKI_TEST_OUTCOME: ${{ steps.wiki_test.outcome }}
+          LEGACY_CHECK_SUMMARY_OUTCOME: ${{ steps.check_summary.outcome }}
+        run: |
+          set -eu
+
+          case "${LEGACY_JOB_STATUS:-}" in
+            failure|cancelled) LEGACY_CONCLUSION=fail ;;
+          esac
+
+          for legacy_outcome in \
+            "${LEGACY_RUNNER_TOOLS_OUTCOME:-}" \
+            "${LEGACY_RUNNER_CONTRACT_OUTCOME:-}" \
+            "${LEGACY_CHECKOUT_OUTCOME:-}" \
+            "${LEGACY_GITHUB_CLI_OUTCOME:-}" \
+            "${LEGACY_APPROVAL_REPORT_OUTCOME:-}" \
+            "${LEGACY_PR_TITLE_OUTCOME:-}" \
+            "${LEGACY_HOSTED_DRIFT_OUTCOME:-}" \
+            "${LEGACY_GITLEAKS_INSTALL_OUTCOME:-}" \
+            "${LEGACY_LYCHEE_INSTALL_MACOS_OUTCOME:-}" \
+            "${LEGACY_RUBY_SETUP_LINUX_OUTCOME:-}" \
+            "${LEGACY_RUBY_SETUP_MACOS_OUTCOME:-}" \
+            "${LEGACY_FRONTMATTER_OUTCOME:-}" \
+            "${LEGACY_RIPGREP_INSTALL_OUTCOME:-}" \
+            "${LEGACY_BUILD_OUTCOME:-}" \
+            "${LEGACY_WIKI_TEST_OUTCOME:-}" \
+            "${LEGACY_CHECK_SUMMARY_OUTCOME:-}"
+          do
+            case "$legacy_outcome" in
+              failure|cancelled) LEGACY_CONCLUSION=fail ;;
+            esac
+          done
+
+          write_consequence_summary() {
+            if [ "$RESULT_CONTRACT_MODE" = enforce ]; then
+              echo "The verification contract gate controls the final consequence; legacy Wiki step outcomes are collected."
+            else
+              echo "Existing Wiki steps keep their current consequences."
+            fi
+          }
+
+          write_preflight_report() {
+            reason="$1"
+
+            case "$LEGACY_CONCLUSION" in
+              fail|failure) parity=match ;;
+              *) parity=difference ;;
+            esac
+
+            echo "::notice::$reason" >&2
+            {
+              echo "result-contract-version=wiki-verification-minimal.v1"
+              echo "result-target=$VERIFICATION_TARGET"
+              echo "result-conclusion=evidence_unavailable"
+              echo "legacy-conclusion=$LEGACY_CONCLUSION"
+              echo "parity=$parity"
+              echo "blocking-checks=[]"
+              echo "unavailable-checks=[\"actions.contract\"]"
+              echo "advisory-checks=[]"
+              echo "records-published=false"
+            } >> "$GITHUB_OUTPUT"
+
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "## Verification Contract v1"
+                echo
+                echo "Target: $VERIFICATION_TARGET"
+                echo
+                echo "Conclusion: evidence_unavailable"
+                echo
+                echo "Legacy parity: $parity ($LEGACY_CONCLUSION)"
+                echo
+                echo "Canonical records: unavailable"
+                echo
+                echo "Unavailable checks: \`actions.contract\`"
+                echo
+                echo "Preflight: $reason"
+                echo
+                write_consequence_summary
+                echo
+                echo "## Verification Details"
+                echo
+                echo "| Check ID | Observed state | Availability | Attribution | Reader impact | Applied effect | Owner | Action | Evidence |"
+                echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+                echo "| actions.contract | not_evaluated | unavailable | actions diagnostic | collector prerequisites unavailable | block | actions-maintainers | restore collector prerequisites and rerun | actions:preflight |"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            exit 0
+          }
+
+          command -v jq >/dev/null 2>&1 || write_preflight_report "jq is unavailable; the collector could not validate or publish canonical records."
+
+          case "$RESULT_CONTRACT_MODE" in
+            observe|enforce) ;;
+            *) write_preflight_report "result-contract-mode must be legacy, observe, or enforce." ;;
+          esac
+
+          case "$VERIFICATION_TARGET" in
+            merge|deploy-preflight) ;;
+            *) write_preflight_report "verification-target must be merge or deploy-preflight." ;;
+          esac
+
+          is_git_oid() {
+            [ "${#1}" -eq 40 ] || return 1
+            case "$1" in
+              *[!0-9a-f]*) return 1 ;;
+              *) return 0 ;;
+            esac
+          }
+
+          is_git_oid "$TESTED_COMMIT" || write_preflight_report "TESTED_COMMIT must be a 40-character lowercase Git object ID."
+
+          if [ -z "$TESTED_TREE" ]; then
+            if ! TESTED_TREE="$(git rev-parse "${TESTED_COMMIT}^{tree}" 2>/dev/null)"; then
+              write_preflight_report "The collector could not resolve the tested tree."
+            fi
+          fi
+
+          is_git_oid "$TESTED_TREE" || write_preflight_report "TESTED_TREE must be a 40-character lowercase Git object ID."
+
+          mkdir -p "$(dirname "$RESULT_OUTPUT_PATH")"
+          work_dir="$(mktemp -d)"
+          candidate="${RESULT_OUTPUT_PATH}.tmp.$$"
+          cleanup() {
+            rm -rf "$work_dir"
+            [ -z "${candidate:-}" ] || rm -f "$candidate"
+          }
+          trap cleanup EXIT INT TERM
+
+          write_result() {
+            result_conclusion="$1"
+            blocking_checks="$2"
+            unavailable_checks="$3"
+            advisory_checks="$4"
+
+            case "$LEGACY_CONCLUSION:$result_conclusion" in
+              pass:trusted|pass:trusted_with_advisories|success:trusted|success:trusted_with_advisories|fail:blocked|failure:blocked|fail:evidence_unavailable|failure:evidence_unavailable)
+                parity=match
+                ;;
+              *)
+                parity=difference
+                ;;
+            esac
+
+            {
+              echo "result-contract-version=wiki-verification-minimal.v1"
+              echo "result-target=$VERIFICATION_TARGET"
+              echo "result-conclusion=$result_conclusion"
+              echo "legacy-conclusion=$LEGACY_CONCLUSION"
+              echo "parity=$parity"
+              echo "blocking-checks=$blocking_checks"
+              echo "unavailable-checks=$unavailable_checks"
+              echo "advisory-checks=$advisory_checks"
+              echo "records-published=true"
+            } >> "$GITHUB_OUTPUT"
+
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "## Verification Contract v1"
+                echo
+                echo "Target: $VERIFICATION_TARGET"
+                echo
+                echo "Conclusion: $result_conclusion"
+                echo
+                echo "Legacy parity: $parity ($LEGACY_CONCLUSION)"
+                echo
+                echo "| Set | Check IDs |"
+                echo "| --- | --- |"
+                echo "| Blocking | \`$blocking_checks\` |"
+                echo "| Unavailable | \`$unavailable_checks\` |"
+                echo "| Advisory | \`$advisory_checks\` |"
+                echo
+                write_consequence_summary
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
+          append_detail_table() {
+            details_file="$1"
+
+            [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+            {
+              echo
+              echo "## Verification Details"
+              echo
+              echo "| Check ID | Observed state | Availability | Attribution | Reader impact | Applied effect | Owner | Action | Evidence |"
+              echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+              jq -r '
+                def markdown_cell:
+                  (if . == null then "" else tostring end) |
+                  gsub("&"; "&amp;") |
+                  gsub("<"; "&lt;") |
+                  gsub(">"; "&gt;") |
+                  gsub("\\|"; "&#124;") |
+                  gsub("`"; "&#96;") |
+                  gsub("[\\r\\n]+"; " ");
+                .[] |
+                [
+                  .check_id,
+                  .observed_state,
+                  .availability,
+                  .attribution,
+                  .reader_impact,
+                  .applied_effect,
+                  .owner,
+                  .action,
+                  .evidence_ref
+                ] |
+                map(markdown_cell) |
+                "| " + join(" | ") + " |"
+              ' "$details_file"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          append_actions_details() {
+            details_file="$work_dir/actions-details.json"
+            jq -s '[
+              .[] | {
+                check_id,
+                observed_state,
+                availability,
+                attribution: "actions diagnostic",
+                reader_impact: "verification evidence unavailable",
+                applied_effect,
+                owner,
+                action,
+                evidence_ref
+              }
+            ]' "$RESULT_OUTPUT_PATH" > "$details_file"
+            append_detail_table "$details_file"
+          }
+
+          append_policy_details() {
+            details_file="$work_dir/policy-details.json"
+            jq -n \
+              --slurpfile policy "$RESULT_POLICY_PATH" \
+              --slurpfile observations "$observations" \
+              --slurpfile records "$RESULT_OUTPUT_PATH" '
+              [
+                $policy[0].expected_checks[] as $expected |
+                ($records | map(select(.check_id == $expected.check_id)) | first) as $record |
+                ($observations[0] | map(select(.check_id == $expected.check_id)) | first) as $observation |
+                {
+                  check_id: $record.check_id,
+                  observed_state: $record.observed_state,
+                  availability: $record.availability,
+                  attribution: (
+                    if $observation == null then "actions diagnostic"
+                    else ($observation.attribution // "not provided")
+                    end
+                  ),
+                  reader_impact: (
+                    if $observation == null then "verification evidence unavailable"
+                    elif (($observation.reader_impact // []) | length) > 0 then ($observation.reader_impact | join(", "))
+                    else "none reported"
+                    end
+                  ),
+                  applied_effect: $record.applied_effect,
+                  owner: $record.owner,
+                  action: $record.action,
+                  evidence_ref: $record.evidence_ref
+                }
+              ]
+            ' > "$details_file"
+            append_detail_table "$details_file"
+          }
+
+          emit_contract_error() {
+            check_id="$1"
+            evidence_ref="$2"
+            action="$3"
+            message="$4"
+
+            echo "::notice::$message" >&2
+            jq -nc \
+              --arg check_id "$check_id" \
+              --arg tested_commit "$TESTED_COMMIT" \
+              --arg tested_tree "$TESTED_TREE" \
+              --arg evidence_ref "$evidence_ref" \
+              --arg action "$action" '
+              {
+                contract_version: "wiki-verification-minimal.v1",
+                check_id: $check_id,
+                tested_commit: $tested_commit,
+                tested_tree: $tested_tree,
+                comparison_commit: null,
+                comparison_tree: null,
+                observed_state: "not_evaluated",
+                availability: "unavailable",
+                applied_effect: "block",
+                owner: "actions-maintainers",
+                action: $action,
+                evidence_ref: $evidence_ref
+              }
+            ' > "$candidate"
+            mv "$candidate" "$RESULT_OUTPUT_PATH"
+            candidate=""
+            write_result evidence_unavailable "[\"$check_id\"]" "[\"$check_id\"]" "[]"
+            append_actions_details
+            exit 0
+          }
+
+          if [ ! -f "$RESULT_POLICY_PATH" ]; then
+            emit_contract_error \
+              actions.policy \
+              actions:invalid-policy \
+              "provide a valid wiki-verification-policy.v1 file and rerun" \
+              "Verification policy not found: $RESULT_POLICY_PATH"
+          fi
+
+          if ! jq -s -e --arg target "$VERIFICATION_TARGET" '
+            def effect: . == "none" or . == "advisory" or . == "block";
+            def check_id: type == "string" and test("^[a-z0-9]+([._-][a-z0-9]+)*$");
+            length == 1 and
+            (.[0] |
+              type == "object" and
+              ((keys_unsorted | sort) == (["contract_version", "expected_checks", "policy_id", "policy_version", "target"] | sort)) and
+              .contract_version == "wiki-verification-policy.v1" and
+              (.policy_id | type == "string" and length > 0) and
+              (.policy_version | type == "string" and length > 0) and
+              .target == $target and
+              (.expected_checks | type == "array" and length > 0) and
+              all(.expected_checks[];
+                type == "object" and
+                ((keys_unsorted | sort) == (["action", "applicability", "check_id", "on_partial", "on_unavailable", "on_violation", "owner"] | sort)) and
+                (.check_id | check_id) and
+                (.applicability == "required" or .applicability == "optional") and
+                (.on_violation | effect) and
+                (.on_partial | effect) and
+                (.on_unavailable | effect) and
+                (.owner | type == "string" and length > 0) and
+                (.action | type == "string" and length > 0)
+              ) and
+              ([.expected_checks[].check_id] | length == (unique | length))
+            )
+          ' "$RESULT_POLICY_PATH" >/dev/null; then
+            emit_contract_error \
+              actions.policy \
+              actions:invalid-policy \
+              "repair the caller-owned verification policy and rerun" \
+              "Verification policy does not match wiki-verification-policy.v1 or its target."
+          fi
+
+          observations="$work_dir/observations.json"
+
+          set -- "$RESULT_RECORDS_DIR"/*.json
+          if [ -e "$1" ]; then
+            if ! jq -s '.' "$@" > "$observations"; then
+              emit_contract_error \
+                actions.contract \
+                actions:invalid-observation-set \
+                "repair the malformed verification observations and rerun" \
+                "Could not read verification observations."
+            fi
+          else
+            printf '[]\n' > "$observations"
+          fi
+
+          expected_ids="$(jq -c '[.expected_checks[].check_id]' "$RESULT_POLICY_PATH")"
+          if ! jq -e \
+            --arg tested_commit "$TESTED_COMMIT" \
+            --arg tested_tree "$TESTED_TREE" \
+            --argjson expected_ids "$expected_ids" '
+            def git_oid: type == "string" and test("^[0-9a-f]{40}$");
+            def check_id: type == "string" and test("^[a-z0-9]+([._-][a-z0-9]+)*$");
+            def required_keys: [
+              "availability", "check_id", "comparison_commit", "comparison_tree",
+              "evidence_ref", "observation_version", "observed_state", "tested_commit", "tested_tree"
+            ];
+            def allowed_keys: required_keys + ["attribution", "reader_impact"];
+            type == "array" and
+            all(.[];
+              type == "object" and
+              ((required_keys - keys_unsorted) | length == 0) and
+              ((keys_unsorted - allowed_keys) | length == 0) and
+              .observation_version == "wiki-verification-observation.v1" and
+              (.check_id | check_id) and
+              .tested_commit == $tested_commit and
+              .tested_tree == $tested_tree and
+              ((.comparison_commit == null and .comparison_tree == null) or
+                ((.comparison_commit | git_oid) and (.comparison_tree | git_oid))) and
+              (.observed_state == "satisfied" or .observed_state == "violated" or .observed_state == "not_evaluated") and
+              (.availability == "available" or .availability == "partial" or .availability == "unavailable") and
+              (.evidence_ref | type == "string" and length > 0) and
+              ((has("attribution") | not) or (.attribution | type == "string" and length > 0)) and
+              ((has("reader_impact") | not) or
+                (.reader_impact | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)))
+            ) and
+            ([.[].check_id] | length == (unique | length)) and
+            ([.[].check_id] - $expected_ids | length == 0) and
+            ([.[] | select(.comparison_commit != null) | [.comparison_commit, .comparison_tree]] | unique | length <= 1)
+          ' "$observations" >/dev/null; then
+            emit_contract_error \
+              actions.contract \
+              actions:invalid-observation-set \
+              "repair the verification observation set and rerun" \
+              "Observations must be unique, policy-known, fact-only records with exact run identities."
+          fi
+
+          if ! jq -e '
+            all(.[];
+              (.availability == "available" and
+                (.observed_state == "satisfied" or .observed_state == "violated")) or
+              (.availability == "partial") or
+              (.availability == "unavailable" and .observed_state == "not_evaluated")
+            )
+          ' "$observations" >/dev/null; then
+            emit_contract_error \
+              actions.contract \
+              actions:invalid-observation-set \
+              "repair the invalid observation state and availability pair and rerun" \
+              "An observation has an invalid state and availability combination."
+          fi
+
+          jq -c \
+            --arg tested_commit "$TESTED_COMMIT" \
+            --arg tested_tree "$TESTED_TREE" \
+            --slurpfile observations "$observations" '
+            def effect_rank:
+              if . == "none" then 0 elif . == "advisory" then 1 else 2 end;
+            def max_effect($left; $right):
+              if ($left | effect_rank) >= ($right | effect_rank) then $left else $right end;
+            def applied_effect($policy; $observation):
+              if $observation.availability == "available" and $observation.observed_state == "satisfied" then "none"
+              elif $observation.availability == "available" and $observation.observed_state == "violated" then $policy.on_violation
+              elif $observation.availability == "partial" and $observation.observed_state == "violated" then max_effect($policy.on_partial; $policy.on_violation)
+              elif $observation.availability == "partial" then $policy.on_partial
+              else $policy.on_unavailable
+              end;
+            def comparison:
+              ($observations[0] | map(select(.comparison_commit != null)) | first) //
+              {comparison_commit: null, comparison_tree: null};
+            .expected_checks[] as $policy |
+            ($observations[0] | map(select(.check_id == $policy.check_id)) | first) as $observation |
+            if $observation == null then
+              {
+                contract_version: "wiki-verification-minimal.v1",
+                check_id: $policy.check_id,
+                tested_commit: $tested_commit,
+                tested_tree: $tested_tree,
+                comparison_commit: comparison.comparison_commit,
+                comparison_tree: comparison.comparison_tree,
+                observed_state: "not_evaluated",
+                availability: "unavailable",
+                applied_effect: "block",
+                owner: "actions-maintainers",
+                action: "produce the missing verification observation and rerun",
+                evidence_ref: "actions:missing-result"
+              }
+            else
+              {
+                contract_version: "wiki-verification-minimal.v1",
+                check_id: $policy.check_id,
+                tested_commit: $observation.tested_commit,
+                tested_tree: $observation.tested_tree,
+                comparison_commit: $observation.comparison_commit,
+                comparison_tree: $observation.comparison_tree,
+                observed_state: $observation.observed_state,
+                availability: $observation.availability,
+                applied_effect: applied_effect($policy; $observation),
+                owner: $policy.owner,
+                action: $policy.action,
+                evidence_ref: $observation.evidence_ref
+              }
+            end
+          ' "$RESULT_POLICY_PATH" > "$candidate"
+
+          if ! jq -s -e \
+            --arg tested_commit "$TESTED_COMMIT" \
+            --arg tested_tree "$TESTED_TREE" '
+            def git_oid: type == "string" and test("^[0-9a-f]{40}$");
+            def check_id: type == "string" and test("^[a-z0-9]+([._-][a-z0-9]+)*$");
+            def exact_keys: [
+              "action", "applied_effect", "availability", "check_id", "comparison_commit",
+              "comparison_tree", "contract_version", "evidence_ref", "observed_state", "owner",
+              "tested_commit", "tested_tree"
+            ];
+            type == "array" and length > 0 and
+            all(.[];
+              type == "object" and
+              ((keys_unsorted | sort) == (exact_keys | sort)) and
+              .contract_version == "wiki-verification-minimal.v1" and
+              (.check_id | check_id) and
+              .tested_commit == $tested_commit and (.tested_commit | git_oid) and
+              .tested_tree == $tested_tree and (.tested_tree | git_oid) and
+              ((.comparison_commit == null and .comparison_tree == null) or
+                ((.comparison_commit | git_oid) and (.comparison_tree | git_oid))) and
+              (.observed_state == "satisfied" or .observed_state == "violated" or .observed_state == "not_evaluated") and
+              (.availability == "available" or .availability == "partial" or .availability == "unavailable") and
+              (.applied_effect == "none" or .applied_effect == "advisory" or .applied_effect == "block") and
+              (.owner | type == "string" and length > 0) and
+              (.action | type == "string" and length > 0) and
+              (.evidence_ref | type == "string" and length > 0)
+            )
+          ' "$candidate" >/dev/null; then
+            emit_contract_error \
+              actions.contract \
+              actions:invalid-minimal-records \
+              "repair the verification contract collector and rerun" \
+              "The collector produced records that do not match wiki-verification-minimal.v1."
+          fi
+
+          mv "$candidate" "$RESULT_OUTPUT_PATH"
+          candidate=""
+
+          blocking_checks="$(jq -sc '[.[] | select(.applied_effect == "block") | .check_id]' "$RESULT_OUTPUT_PATH")"
+          unavailable_checks="$(jq -sc '[.[] | select(.availability != "available") | .check_id]' "$RESULT_OUTPUT_PATH")"
+          advisory_checks="$(jq -sc '[.[] | select(.applied_effect == "advisory") | .check_id]' "$RESULT_OUTPUT_PATH")"
+          blocking_violations="$(jq -sc '[.[] | select(.applied_effect == "block" and .observed_state == "violated")] | length' "$RESULT_OUTPUT_PATH")"
+          blocking_unavailable="$(jq -sc '[.[] | select(.applied_effect == "block" and .availability != "available" and .observed_state != "violated")] | length' "$RESULT_OUTPUT_PATH")"
+          advisory_count="$(jq -sc '[.[] | select(.applied_effect == "advisory")] | length' "$RESULT_OUTPUT_PATH")"
+
+          if [ "$blocking_violations" -gt 0 ]; then
+            result_conclusion=blocked
+          elif [ "$blocking_unavailable" -gt 0 ]; then
+            result_conclusion=evidence_unavailable
+          elif [ "$advisory_count" -gt 0 ]; then
+            result_conclusion=trusted_with_advisories
+          else
+            result_conclusion=trusted
+          fi
+
+          write_result "$result_conclusion" "$blocking_checks" "$unavailable_checks" "$advisory_checks"
+          append_policy_details
+
+      - name: Enforce verification contract
+        if: always() && inputs['result-contract-mode'] == 'enforce'
+        shell: sh
+        env:
+          RESULT_CONCLUSION: ${{ steps.verification_contract.outputs['result-conclusion'] }}
+        run: |
+          set -eu
+
+          case "$RESULT_CONCLUSION" in
+            trusted|trusted_with_advisories)
+              exit 0
+              ;;
+            blocked)
+              echo "::error::Verification policy found a blocking defect."
+              ;;
+            evidence_unavailable)
+              echo "::error::Required verification evidence is unavailable."
+              ;;
+            *)
+              echo "::error::Verification contract did not produce a valid conclusion."
+              ;;
+          esac
+
+          exit 1
+
       - name: Enforce remote link result
-        if: always()
+        if: always() && inputs['result-contract-mode'] != 'enforce'
         env:
           LINK_LINUX_INSTALL_OUTCOME: ${{ steps.link_check_linux_install.outcome }}
           LINK_LINUX_PREINSTALLED_OUTCOME: ${{ steps.link_check_linux_preinstalled.outcome }}

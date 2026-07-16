@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/e0da/actions/schemas/wiki-verification-minimal.v1.schema.json",
+  "title": "Wiki verification minimal record v1",
+  "description": "The policy-applied result for one Wiki verification check.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "check_id",
+    "tested_commit",
+    "tested_tree",
+    "comparison_commit",
+    "comparison_tree",
+    "observed_state",
+    "availability",
+    "applied_effect",
+    "owner",
+    "action",
+    "evidence_ref"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "wiki-verification-minimal.v1"
+    },
+    "check_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "tested_commit": {
+      "$ref": "#/$defs/gitObjectId"
+    },
+    "tested_tree": {
+      "$ref": "#/$defs/gitObjectId"
+    },
+    "comparison_commit": {
+      "anyOf": [
+        { "$ref": "#/$defs/gitObjectId" },
+        { "type": "null" }
+      ]
+    },
+    "comparison_tree": {
+      "anyOf": [
+        { "$ref": "#/$defs/gitObjectId" },
+        { "type": "null" }
+      ]
+    },
+    "observed_state": {
+      "enum": ["satisfied", "violated", "not_evaluated"]
+    },
+    "availability": {
+      "enum": ["available", "partial", "unavailable"]
+    },
+    "applied_effect": {
+      "enum": ["none", "advisory", "block"]
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_ref": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    }
+  }
+}
