@@ -57,6 +57,9 @@ require_literal "        default: .github/wiki-verification-policy.json"
 require_input_default result-contract-mode legacy
 require_input_default verification-target merge
 require_input_default result-policy-path .github/wiki-verification-policy.json
+require_literal "      result-adapter-command:"
+require_literal "        default: \"\""
+require_input_default result-adapter-command '""'
 require_literal "    outputs:"
 require_literal "      result-contract-version:"
 require_literal "        value: \${{ jobs['wiki-ci'].outputs['result-contract-version'] }}"
@@ -64,6 +67,17 @@ require_literal "      result-target:"
 require_literal "        value: \${{ jobs['wiki-ci'].outputs['result-target'] }}"
 require_literal "      result-conclusion:"
 require_literal "        value: \${{ jobs['wiki-ci'].outputs['result-conclusion'] }}"
+for output_name in \
+  legacy-conclusion \
+  parity \
+  blocking-checks \
+  unavailable-checks \
+  advisory-checks \
+  records-published
+do
+  require_literal "      $output_name:"
+  require_literal "        value: \${{ jobs['wiki-ci'].outputs['$output_name'] }}"
+done
 require_literal "  wiki-ci:"
 require_literal "    name: Wiki CI"
 require_literal "    runs-on: \${{ inputs.runner }}"
@@ -71,6 +85,16 @@ require_literal "    outputs:"
 require_literal "      result-contract-version: \${{ steps.verification_contract.outputs['result-contract-version'] }}"
 require_literal "      result-target: \${{ steps.verification_contract.outputs['result-target'] }}"
 require_literal "      result-conclusion: \${{ steps.verification_contract.outputs['result-conclusion'] }}"
+for output_name in \
+  legacy-conclusion \
+  parity \
+  blocking-checks \
+  unavailable-checks \
+  advisory-checks \
+  records-published
+do
+  require_literal "      $output_name: \${{ steps.verification_contract.outputs['$output_name'] }}"
+done
 require_literal "      - name: Validate runner contract"
 require_literal "              gh|ruby|brew|make|lychee|bun|jq)"
 require_literal "Expected one of: gh, ruby, brew, make, lychee, bun, jq."
@@ -84,6 +108,9 @@ require_literal "      - name: Validate YAML frontmatter in .md files"
 require_literal "      - name: Build"
 require_literal "      - name: Test"
 require_literal "      - name: Write check summary"
+require_literal "      - name: Run result adapter"
+require_literal "        id: result_adapter"
+require_literal "        if: always() && inputs['result-contract-mode'] != 'legacy' && inputs['result-adapter-command'] != ''"
 require_literal "      - name: Collect verification contract"
 require_literal "        id: verification_contract"
 require_literal "        if: always() && inputs['result-contract-mode'] != 'legacy'"
@@ -91,6 +118,8 @@ require_literal "        continue-on-error: true"
 require_literal "          RESULT_CONTRACT_MODE: \${{ inputs['result-contract-mode'] }}"
 require_literal "          VERIFICATION_TARGET: \${{ inputs['verification-target'] }}"
 require_literal "          RESULT_POLICY_PATH: \${{ inputs['result-policy-path'] }}"
+require_literal "          RESULT_ADAPTER_COMMAND: \${{ inputs['result-adapter-command'] }}"
+require_literal "          RESULT_ADAPTER_OUTCOME: \${{ steps.result_adapter.outcome }}"
 require_literal "          LEGACY_JOB_STATUS: \${{ job.status }}"
 require_literal "          LEGACY_CONCLUSION: \${{ (steps.link_check_linux_install.outcome == 'failure' || steps.link_check_linux_install.outcome == 'cancelled' || steps.link_check_linux_preinstalled.outcome == 'failure' || steps.link_check_linux_preinstalled.outcome == 'cancelled' || steps.link_check_macos.outcome == 'failure' || steps.link_check_macos.outcome == 'cancelled') && 'fail' || 'pass' }}"
 require_literal "      - name: Enforce verification contract"
@@ -108,6 +137,7 @@ frontmatter_line="$(step_line "Validate YAML frontmatter in .md files")"
 build_line="$(step_line "Build")"
 test_line="$(step_line "Test")"
 summary_line="$(step_line "Write check summary")"
+adapter_line="$(step_line "Run result adapter")"
 collector_line="$(step_line "Collect verification contract")"
 contract_gate_line="$(step_line "Enforce verification contract")"
 gate_line="$(step_line "Enforce remote link result")"
@@ -115,12 +145,63 @@ gate_line="$(step_line "Enforce remote link result")"
 if ! [ "$frontmatter_line" -lt "$build_line" ] ||
    ! [ "$build_line" -lt "$test_line" ] ||
    ! [ "$test_line" -lt "$summary_line" ] ||
-   ! [ "$summary_line" -lt "$collector_line" ] ||
+   ! [ "$summary_line" -lt "$adapter_line" ] ||
+   ! [ "$adapter_line" -lt "$collector_line" ] ||
    ! [ "$collector_line" -lt "$contract_gate_line" ] ||
    ! [ "$contract_gate_line" -lt "$gate_line" ]; then
   echo "wiki evidence and compatibility gate steps are out of order" >&2
   exit 1
 fi
+
+require_step_literal() {
+  step_name="$1"
+  expected="$2"
+
+  if ! awk -v step_name="$step_name" -v expected="$expected" '
+    $0 == "      - name: " step_name { in_step=1; next }
+    in_step && /^      - name:/ { exit }
+    in_step && index($0, expected) { found=1 }
+    END { exit(found ? 0 : 1) }
+  ' "$workflow"; then
+    echo "$step_name is missing expected text: $expected" >&2
+    exit 1
+  fi
+}
+
+require_step_literal "Run result adapter" "        continue-on-error: true"
+require_step_literal "Run result adapter" "          RESULT_ADAPTER_COMMAND: \${{ inputs['result-adapter-command'] }}"
+require_step_literal "Run result adapter" "          RESULT_RECORDS_DIR: .wiki-verification/observations"
+require_step_literal "Run result adapter" "          TESTED_COMMIT: \${{ github.sha }}"
+require_step_literal "Run result adapter" "          TESTED_TREE: \"\""
+require_step_literal "Run result adapter" "          LEGACY_JOB_STATUS: \${{ job.status }}"
+require_step_literal "Run result adapter" "          LEGACY_CONCLUSION: \${{ (steps.link_check_linux_install.outcome == 'failure' || steps.link_check_linux_install.outcome == 'cancelled' || steps.link_check_linux_preinstalled.outcome == 'failure' || steps.link_check_linux_preinstalled.outcome == 'cancelled' || steps.link_check_macos.outcome == 'failure' || steps.link_check_macos.outcome == 'cancelled') && 'fail' || 'pass' }}"
+
+adapter_predecessor_step_ids="$(printf '%s\n' \
+  runner_tools \
+  runner_contract \
+  checkout \
+  github_cli \
+  approval_report \
+  pr_title \
+  hosted_drift \
+  gitleaks_install \
+  secret_scan \
+  link_check_linux_install \
+  link_check_linux_preinstalled \
+  lychee_install_macos \
+  link_check_macos \
+  ruby_setup_linux \
+  ruby_setup_macos \
+  frontmatter \
+  ripgrep_install \
+  build \
+  wiki_test \
+  check_summary)"
+
+for step_id in $adapter_predecessor_step_ids; do
+  environment_name="$(printf '%s' "$step_id" | tr '[:lower:]' '[:upper:]')"
+  require_step_literal "Run result adapter" "          LEGACY_${environment_name}_OUTCOME: \${{ steps.$step_id.outcome }}"
+done
 
 summary_row_count="$(awk '
   $0 == "      - name: Write check summary" { in_summary=1; next }
@@ -228,7 +309,12 @@ for step_id in $expected_softened_step_ids; do
   require_literal "\${LEGACY_${environment_name}_OUTCOME:-}"
 done
 
-if grep -F "LEGACY_SECRET_SCAN_OUTCOME:" "$workflow" >/dev/null; then
+if awk '
+  $0 == "      - name: Collect verification contract" { in_collector=1; next }
+  in_collector && /^      - name:/ { exit }
+  in_collector && index($0, "LEGACY_SECRET_SCAN_OUTCOME") { found=1 }
+  END { exit(found ? 0 : 1) }
+' "$workflow"; then
   echo "advisory secret scan must not contribute to legacy failure parity" >&2
   exit 1
 fi
