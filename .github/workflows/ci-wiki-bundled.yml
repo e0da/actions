@@ -226,14 +226,14 @@ jobs:
 
           for capability in $RUNNER_CAPABILITIES; do
             case "$capability" in
-              gh|ruby|brew|make|lychee)
+              gh|ruby|brew|make|lychee|bun|jq)
                 if ! command -v "$capability" >/dev/null 2>&1; then
                   echo "::error::runner-capabilities requested '${capability}', but command '${capability}' was not found."
                   exit 1
                 fi
                 ;;
               *)
-                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make, lychee."
+                echo "::error::Unknown runner-capabilities token '${capability}'. Expected one of: gh, ruby, brew, make, lychee, bun, jq."
                 exit 1
                 ;;
             esac
@@ -901,7 +901,7 @@ jobs:
               echo "| Broken links | $(remote_link_status) |"
               echo "| Frontmatter | $(normalize_status "${FRONTMATTER_OUTCOME:-}") |"
               echo "| Jekyll build | $(normalize_status "${BUILD_OUTCOME:-}") |"
-              echo "| IA test | $(normalize_status "${TEST_OUTCOME:-}") |"
+              echo "| Repository tests | $(normalize_status "${TEST_OUTCOME:-}") |"
 
               if [ "$(remote_link_status)" = "fail (blocking)" ]; then
                 echo

@@ -120,6 +120,22 @@ cat > "$manifest_path" <<'JSON'
             "path": null,
             "version": null
           }
+        },
+        {
+          "name": "bun",
+          "observed": {
+            "status": "present",
+            "path": "/runner/.local/bin/bun",
+            "version": "1.2.18"
+          }
+        },
+        {
+          "name": "jq",
+          "observed": {
+            "status": "present",
+            "path": "/usr/bin/jq",
+            "version": "jq-1.7.1"
+          }
         }
       ]
     }
@@ -136,6 +152,9 @@ OBSERVED_RUNNER_ARCH=ARM64
 REPOSITORY=e0da/stack
 validate_runner_manifest
 
+RUNNER_CAPABILITIES="bun jq"
+validate_runner_manifest
+
 expect_failure() {
   name=$1
   expected=$2
@@ -147,6 +166,16 @@ expect_failure() {
   grep -F "$expected" "$tmpdir/${name}.out" >/dev/null
 }
 
+RUNNER_CAPABILITIES=bun
+RUNNER_MANIFEST="$(jq '(.runners[0].tools[] | select(.name == "bun") | .observed.status) = "missing"' "$manifest_path")"
+expect_failure bun_missing "tools.bun.observed.status expected 'present', got 'missing'" validate_runner_manifest
+
+RUNNER_CAPABILITIES=jq
+RUNNER_MANIFEST="$(jq '(.runners[0].tools[] | select(.name == "jq") | .observed.version) = ""' "$manifest_path")"
+expect_failure jq_missing_version "tools.jq.observed.version expected a non-empty version" validate_runner_manifest
+
+RUNNER_MANIFEST="$(cat "$manifest_path")"
+RUNNER_CAPABILITIES=lychee
 RUNNER_PROFILE=hosted-linux
 expect_failure wrong_profile "runner_identity.runner_profile expected 'hosted-linux'" validate_runner_manifest
 

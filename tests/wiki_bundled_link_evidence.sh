@@ -72,7 +72,17 @@ run_evidence_fixture() {
   grep -F "| Broken links | fail (blocking) |" "$summary" >/dev/null
   grep -F "| Frontmatter | pass |" "$summary" >/dev/null
   grep -F "| Jekyll build | pass |" "$summary" >/dev/null
-  grep -F "| IA test | pass |" "$summary" >/dev/null
+  grep -F "| Repository tests | pass |" "$summary" >/dev/null
+  if grep -F "| IA test |" "$summary" >/dev/null; then
+    echo "summary still uses the repository-specific IA test label" >&2
+    exit 1
+  fi
+
+  : > "$summary"
+  TEST_OUTCOME=failure \
+    GITHUB_STEP_SUMMARY="$summary" \
+    sh "$summary_script"
+  grep -F "| Repository tests | fail |" "$summary" >/dev/null
 
   if LINK_LINUX_INSTALL_OUTCOME="$remote_outcome" \
     LINK_LINUX_PREINSTALLED_OUTCOME=skipped \
