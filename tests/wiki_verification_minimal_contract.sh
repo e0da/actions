@@ -37,6 +37,8 @@ extract_run_step() {
 
 collector="$tmpdir/collect.sh"
 extract_run_step "Collect verification contract" "$collector"
+adapter="$tmpdir/adapter.sh"
+extract_run_step "Run result adapter" "$adapter"
 enforce_gate="$tmpdir/enforce.sh"
 extract_run_step "Enforce verification contract" "$enforce_gate"
 
@@ -51,6 +53,98 @@ fi
 
 commit=1111111111111111111111111111111111111111
 tree=2222222222222222222222222222222222222222
+
+adapter_probe="$tmpdir/adapter-probe.sh"
+adapter_probe_output="$tmpdir/adapter-probe.out"
+cat >"$adapter_probe" <<'SH'
+#!/bin/sh
+set -eu
+
+for name in \
+  TESTED_COMMIT \
+  TESTED_TREE \
+  LEGACY_RUNNER_TOOLS_OUTCOME \
+  LEGACY_RUNNER_CONTRACT_OUTCOME \
+  LEGACY_CHECKOUT_OUTCOME \
+  LEGACY_GITHUB_CLI_OUTCOME \
+  LEGACY_APPROVAL_REPORT_OUTCOME \
+  LEGACY_PR_TITLE_OUTCOME \
+  LEGACY_HOSTED_DRIFT_OUTCOME \
+  LEGACY_GITLEAKS_INSTALL_OUTCOME \
+  LEGACY_SECRET_SCAN_OUTCOME \
+  LEGACY_LINK_CHECK_LINUX_INSTALL_OUTCOME \
+  LEGACY_LINK_CHECK_LINUX_PREINSTALLED_OUTCOME \
+  LEGACY_LYCHEE_INSTALL_MACOS_OUTCOME \
+  LEGACY_LINK_CHECK_MACOS_OUTCOME \
+  LEGACY_RUBY_SETUP_LINUX_OUTCOME \
+  LEGACY_RUBY_SETUP_MACOS_OUTCOME \
+  LEGACY_FRONTMATTER_OUTCOME \
+  LEGACY_RIPGREP_INSTALL_OUTCOME \
+  LEGACY_BUILD_OUTCOME \
+  LEGACY_WIKI_TEST_OUTCOME \
+  LEGACY_CHECK_SUMMARY_OUTCOME
+do
+  eval "value=\${$name-}"
+  [ -n "$value" ] || {
+    echo "missing adapter environment value: $name" >&2
+    exit 1
+  }
+  printf '%s=%s\n' "$name" "$value"
+done >"$ADAPTER_PROBE_OUTPUT"
+SH
+chmod +x "$adapter_probe"
+
+run_adapter() {
+  adapter_command="$1"
+  tested_commit="$2"
+  tested_tree="$3"
+
+  ADAPTER_PROBE_OUTPUT="$adapter_probe_output" \
+    RESULT_ADAPTER_COMMAND="$adapter_command" \
+    RESULT_RECORDS_DIR="$tmpdir/adapter-records" \
+    TESTED_COMMIT="$tested_commit" \
+    TESTED_TREE="$tested_tree" \
+    LEGACY_JOB_STATUS=success \
+    LEGACY_CONCLUSION=pass \
+    LEGACY_RUNNER_TOOLS_OUTCOME=success \
+    LEGACY_RUNNER_CONTRACT_OUTCOME=success \
+    LEGACY_CHECKOUT_OUTCOME=success \
+    LEGACY_GITHUB_CLI_OUTCOME=success \
+    LEGACY_APPROVAL_REPORT_OUTCOME=skipped \
+    LEGACY_PR_TITLE_OUTCOME=success \
+    LEGACY_HOSTED_DRIFT_OUTCOME=success \
+    LEGACY_GITLEAKS_INSTALL_OUTCOME=success \
+    LEGACY_SECRET_SCAN_OUTCOME=success \
+    LEGACY_LINK_CHECK_LINUX_INSTALL_OUTCOME=success \
+    LEGACY_LINK_CHECK_LINUX_PREINSTALLED_OUTCOME=skipped \
+    LEGACY_LYCHEE_INSTALL_MACOS_OUTCOME=skipped \
+    LEGACY_LINK_CHECK_MACOS_OUTCOME=skipped \
+    LEGACY_RUBY_SETUP_LINUX_OUTCOME=success \
+    LEGACY_RUBY_SETUP_MACOS_OUTCOME=skipped \
+    LEGACY_FRONTMATTER_OUTCOME=success \
+    LEGACY_RIPGREP_INSTALL_OUTCOME=success \
+    LEGACY_BUILD_OUTCOME=success \
+    LEGACY_WIKI_TEST_OUTCOME=success \
+    LEGACY_CHECK_SUMMARY_OUTCOME=success \
+    sh "$adapter"
+}
+
+tested_adapter_commit="$(git rev-parse HEAD)"
+tested_adapter_tree="$(git rev-parse 'HEAD^{tree}')"
+run_adapter "$adapter_probe" "$tested_adapter_commit" ""
+grep -F "TESTED_COMMIT=$tested_adapter_commit" "$adapter_probe_output" >/dev/null ||
+  fail "adapter did not expose the tested commit"
+grep -F "TESTED_TREE=$tested_adapter_tree" "$adapter_probe_output" >/dev/null ||
+  fail "adapter did not expose the tested tree"
+grep -F "LEGACY_SECRET_SCAN_OUTCOME=success" "$adapter_probe_output" >/dev/null ||
+  fail "adapter did not expose advisory step outcomes"
+grep -F "LEGACY_LINK_CHECK_LINUX_INSTALL_OUTCOME=success" "$adapter_probe_output" >/dev/null ||
+  fail "adapter did not expose link step outcomes"
+
+if run_adapter "exit 23" "$tested_adapter_commit" "$tested_adapter_tree" \
+  >"$tmpdir/adapter-failure.log" 2>&1; then
+  fail "adapter accepted a failing command"
+fi
 
 write_policy() {
   cat >"$tmpdir/policy.json" <<'JSON'
@@ -119,6 +213,8 @@ run_collector() {
   legacy_build_outcome="${5:-success}"
   legacy_test_outcome="${6:-success}"
   legacy_secret_scan_outcome="${7:-success}"
+  result_adapter_command="${8:-}"
+  result_adapter_outcome="${9:-skipped}"
   output="$tmpdir/$case_name.jsonl"
   summary="$tmpdir/$case_name.md"
   github_output="$tmpdir/$case_name.out"
@@ -128,6 +224,8 @@ run_collector() {
     RESULT_POLICY_PATH="$tmpdir/policy.json" \
     RESULT_RECORDS_DIR="$records_dir" \
     RESULT_OUTPUT_PATH="$output" \
+    RESULT_ADAPTER_COMMAND="$result_adapter_command" \
+    RESULT_ADAPTER_OUTCOME="$result_adapter_outcome" \
     TESTED_COMMIT="$commit" \
     TESTED_TREE="$tree" \
     LEGACY_CONCLUSION=pass \
@@ -170,6 +268,24 @@ grep -F "result-target=merge" "$pass_github_output" >/dev/null
 grep -F "result-conclusion=trusted" "$pass_github_output" >/dev/null
 grep -F "legacy-conclusion=pass" "$pass_github_output" >/dev/null
 grep -F "parity=match" "$pass_github_output" >/dev/null
+
+adapter_failure_paths="$(run_collector adapter-failure "$pass_records" success observe success success success "exit 23" failure)"
+adapter_failure_output="${adapter_failure_paths%%|*}"
+adapter_failure_github_output="${adapter_failure_paths##*|}"
+[ ! -e "$adapter_failure_output" ] || fail "failed adapter published canonical records"
+grep -F "result-conclusion=evidence_unavailable" "$adapter_failure_github_output" >/dev/null ||
+  fail "failed adapter did not close the result contract"
+grep -F "records-published=false" "$adapter_failure_github_output" >/dev/null ||
+  fail "failed adapter claimed to publish records"
+
+missing_adapter_records="$tmpdir/missing-adapter-records"
+mkdir -p "$missing_adapter_records"
+missing_adapter_paths="$(run_collector missing-adapter-output "$missing_adapter_records" success observe success success success true success)"
+missing_adapter_github_output="${missing_adapter_paths##*|}"
+grep -F "result-conclusion=evidence_unavailable" "$missing_adapter_github_output" >/dev/null ||
+  fail "adapter without output did not close the result contract"
+grep -F 'unavailable-checks=["source.frontmatter","review.approval"]' "$missing_adapter_github_output" >/dev/null ||
+  fail "adapter without output did not report every missing check"
 grep -F "## Verification Contract v1" "$pass_summary" >/dev/null
 grep -F "Existing Wiki steps keep their current consequences." "$pass_summary" >/dev/null
 if grep -F "The verification contract gate controls the final consequence" "$pass_summary" >/dev/null; then

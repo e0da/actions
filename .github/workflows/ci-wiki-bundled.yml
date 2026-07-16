@@ -90,6 +90,11 @@ on:
         required: false
         type: string
         default: .github/wiki-verification-policy.json
+      result-adapter-command:
+        description: "Optional caller-owned command that writes verification observations."
+        required: false
+        type: string
+        default: ""
     outputs:
       result-contract-version:
         description: "Minimal result contract version. Empty in legacy mode."
@@ -100,6 +105,24 @@ on:
       result-conclusion:
         description: "Policy-applied conclusion. Empty in legacy mode."
         value: ${{ jobs['wiki-ci'].outputs['result-conclusion'] }}
+      legacy-conclusion:
+        description: "Legacy Wiki CI conclusion. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['legacy-conclusion'] }}
+      parity:
+        description: "Whether the legacy and policy-applied conclusions agree. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['parity'] }}
+      blocking-checks:
+        description: "JSON array of blocking check IDs. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['blocking-checks'] }}
+      unavailable-checks:
+        description: "JSON array of check IDs with unavailable evidence. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['unavailable-checks'] }}
+      advisory-checks:
+        description: "JSON array of advisory check IDs. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['advisory-checks'] }}
+      records-published:
+        description: "Whether the collector published canonical records. Empty in legacy mode."
+        value: ${{ jobs['wiki-ci'].outputs['records-published'] }}
 
 jobs:
   wiki-ci:
@@ -114,6 +137,12 @@ jobs:
       result-contract-version: ${{ steps.verification_contract.outputs['result-contract-version'] }}
       result-target: ${{ steps.verification_contract.outputs['result-target'] }}
       result-conclusion: ${{ steps.verification_contract.outputs['result-conclusion'] }}
+      legacy-conclusion: ${{ steps.verification_contract.outputs['legacy-conclusion'] }}
+      parity: ${{ steps.verification_contract.outputs['parity'] }}
+      blocking-checks: ${{ steps.verification_contract.outputs['blocking-checks'] }}
+      unavailable-checks: ${{ steps.verification_contract.outputs['unavailable-checks'] }}
+      advisory-checks: ${{ steps.verification_contract.outputs['advisory-checks'] }}
+      records-published: ${{ steps.verification_contract.outputs['records-published'] }}
     env:
       JEKYLL_ENV: production
     steps:
@@ -965,6 +994,48 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Run result adapter
+        id: result_adapter
+        if: always() && inputs['result-contract-mode'] != 'legacy' && inputs['result-adapter-command'] != ''
+        continue-on-error: true
+        shell: sh
+        env:
+          RESULT_ADAPTER_COMMAND: ${{ inputs['result-adapter-command'] }}
+          RESULT_RECORDS_DIR: .wiki-verification/observations
+          TESTED_COMMIT: ${{ github.sha }}
+          TESTED_TREE: ""
+          LEGACY_JOB_STATUS: ${{ job.status }}
+          LEGACY_CONCLUSION: ${{ (steps.link_check_linux_install.outcome == 'failure' || steps.link_check_linux_install.outcome == 'cancelled' || steps.link_check_linux_preinstalled.outcome == 'failure' || steps.link_check_linux_preinstalled.outcome == 'cancelled' || steps.link_check_macos.outcome == 'failure' || steps.link_check_macos.outcome == 'cancelled') && 'fail' || 'pass' }}
+          LEGACY_RUNNER_TOOLS_OUTCOME: ${{ steps.runner_tools.outcome }}
+          LEGACY_RUNNER_CONTRACT_OUTCOME: ${{ steps.runner_contract.outcome }}
+          LEGACY_CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          LEGACY_GITHUB_CLI_OUTCOME: ${{ steps.github_cli.outcome }}
+          LEGACY_APPROVAL_REPORT_OUTCOME: ${{ steps.approval_report.outcome }}
+          LEGACY_PR_TITLE_OUTCOME: ${{ steps.pr_title.outcome }}
+          LEGACY_HOSTED_DRIFT_OUTCOME: ${{ steps.hosted_drift.outcome }}
+          LEGACY_GITLEAKS_INSTALL_OUTCOME: ${{ steps.gitleaks_install.outcome }}
+          LEGACY_SECRET_SCAN_OUTCOME: ${{ steps.secret_scan.outcome }}
+          LEGACY_LINK_CHECK_LINUX_INSTALL_OUTCOME: ${{ steps.link_check_linux_install.outcome }}
+          LEGACY_LINK_CHECK_LINUX_PREINSTALLED_OUTCOME: ${{ steps.link_check_linux_preinstalled.outcome }}
+          LEGACY_LYCHEE_INSTALL_MACOS_OUTCOME: ${{ steps.lychee_install_macos.outcome }}
+          LEGACY_LINK_CHECK_MACOS_OUTCOME: ${{ steps.link_check_macos.outcome }}
+          LEGACY_RUBY_SETUP_LINUX_OUTCOME: ${{ steps.ruby_setup_linux.outcome }}
+          LEGACY_RUBY_SETUP_MACOS_OUTCOME: ${{ steps.ruby_setup_macos.outcome }}
+          LEGACY_FRONTMATTER_OUTCOME: ${{ steps.frontmatter.outcome }}
+          LEGACY_RIPGREP_INSTALL_OUTCOME: ${{ steps.ripgrep_install.outcome }}
+          LEGACY_BUILD_OUTCOME: ${{ steps.build.outcome }}
+          LEGACY_WIKI_TEST_OUTCOME: ${{ steps.wiki_test.outcome }}
+          LEGACY_CHECK_SUMMARY_OUTCOME: ${{ steps.check_summary.outcome }}
+        run: |
+          set -eu
+
+          if [ -z "$TESTED_TREE" ]; then
+            TESTED_TREE="$(git rev-parse "${TESTED_COMMIT}^{tree}")"
+          fi
+          export TESTED_TREE
+
+          sh -c "$RESULT_ADAPTER_COMMAND"
+
       - name: Collect verification contract
         id: verification_contract
         if: always() && inputs['result-contract-mode'] != 'legacy'
@@ -974,6 +1045,8 @@ jobs:
           RESULT_CONTRACT_MODE: ${{ inputs['result-contract-mode'] }}
           VERIFICATION_TARGET: ${{ inputs['verification-target'] }}
           RESULT_POLICY_PATH: ${{ inputs['result-policy-path'] }}
+          RESULT_ADAPTER_COMMAND: ${{ inputs['result-adapter-command'] }}
+          RESULT_ADAPTER_OUTCOME: ${{ steps.result_adapter.outcome }}
           RESULT_RECORDS_DIR: .wiki-verification/observations
           RESULT_OUTPUT_PATH: ${{ runner.temp }}/wiki-verification-minimal.jsonl
           TESTED_COMMIT: ${{ github.sha }}
@@ -1085,6 +1158,10 @@ jobs:
           }
 
           command -v jq >/dev/null 2>&1 || write_preflight_report "jq is unavailable; the collector could not validate or publish canonical records."
+
+          if [ -n "${RESULT_ADAPTER_COMMAND:-}" ] && [ "${RESULT_ADAPTER_OUTCOME:-}" != success ]; then
+            write_preflight_report "The result adapter failed; canonical records were not published."
+          fi
 
           case "$RESULT_CONTRACT_MODE" in
             observe|enforce) ;;
