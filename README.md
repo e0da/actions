@@ -75,6 +75,35 @@ Callers can override `runner`, `lint-command`, `build-command`,
 `playwright-browser`, and pass newline-delimited non-secret CI environment
 entries through `env`.
 
+### `ci-node-npm.yml` — Node repos with a `package-lock.json`
+
+For repos that install with npm, not bun. Use `ci-typescript-bun.yml` instead
+when the repo has a `bun.lock`.
+
+Three steps:
+
+- `npm ci` — always. This is the only install command that consumes
+  `package-lock.json`, and it fails when the lockfile and `package.json`
+  disagree. That makes it the gate for a lockfile-only dependency bump.
+- `npm run build` — only when `package.json` has a `build` script.
+- `test-command` — only when the caller passes one.
+
+The test step is opt-in on purpose. Several Node repos ship a placeholder test
+script (`echo "Error: no test specified" && exit 1`). Auto-running `npm test`
+because a `test` script exists would fail CI without proving anything, so the
+caller has to name a real command.
+
+Callers can override `runner`, `node-version`, and `test-command`.
+
+```yaml
+jobs:
+  node:
+    uses: e0da/actions/.github/workflows/ci-node-npm.yml@main
+    with:
+      node-version: "20"
+      test-command: npm test -- --watchAll=false
+```
+
 ### `ci-markdown.yml` — Markdown-heavy repos
 
 - **Link check**: lychee scans all `.md` files for broken external links. Linux
@@ -305,6 +334,10 @@ jobs:
   # Add for TypeScript/Bun repos:
   typescript:
     uses: e0da/actions/.github/workflows/ci-typescript-bun.yml@main
+
+  # Add for Node repos with a package-lock.json:
+  node:
+    uses: e0da/actions/.github/workflows/ci-node-npm.yml@main
 
   # Add for markdown-heavy repos:
   markdown:

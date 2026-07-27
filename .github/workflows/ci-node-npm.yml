@@ -1,0 +1,53 @@
+name: CI Node (npm)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the Node/npm job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      node-version:
+        description: "Node version passed to actions/setup-node."
+        required: false
+        type: string
+        default: "20"
+      test-command:
+        description: "Explicit test command. Empty skips the test step; npm test is never auto-detected because a placeholder test script would fail CI without proving anything."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-and-test:
+    name: Install / Build / Test
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install from lockfile
+        run: npm ci
+
+      - name: Build
+        run: |
+          if node -e 'const p = require("./package.json"); process.exit(p.scripts?.build ? 0 : 1);'; then
+            npm run build
+          else
+            echo "⏭️ No build script — skipping"
+          fi
+
+      - name: Test
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: |
+          if [[ -n "$TEST_COMMAND" ]]; then
+            bash -lc "$TEST_COMMAND"
+          else
+            echo "⏭️ No test-command configured — skipping"
+          fi
