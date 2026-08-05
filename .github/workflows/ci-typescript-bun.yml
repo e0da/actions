@@ -18,35 +18,9 @@ on:
         required: false
         type: string
         default: ""
-      lint-command:
-        description: "Optional lint command. When empty, runs package.json lint if present."
-        required: false
-        type: string
-        default: ""
-      build-command:
-        description: "Optional build command. When empty, runs package.json build if present."
-        required: false
-        type: string
-        default: ""
-      check-command:
-        description: "Optional typecheck command. When empty, runs package.json check if present."
-        required: false
-        type: string
-        default: ""
-      test-command:
-        description: "Optional test command. When empty, runs bun test if test files are found."
-        required: false
-        type: string
-        default: ""
-      playwright-browser:
-        description: "Optional Playwright browser to install with dependencies before tests."
-        required: false
-        type: string
-        default: ""
-
 jobs:
   build-and-test:
-    name: Lint / Build / Check / Test
+    name: Format / Check / Test
     runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -58,82 +32,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install ripgrep
-        run: |
-          if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y ripgrep
-          fi
-
       - name: Export CI environment
         env:
           CI_ENV: ${{ inputs.env }}
-        run: |
-          if [[ -z "$CI_ENV" ]]; then
-            echo "No extra environment entries"
-            exit 0
-          fi
+        run: echo "$CI_ENV" >> "$GITHUB_ENV"
 
-          while IFS= read -r line; do
-            if [[ -n "$line" ]]; then
-              echo "$line" >> "$GITHUB_ENV"
-            fi
-          done <<< "$CI_ENV"
-
-      - name: Lint
-        env:
-          LINT_COMMAND: ${{ inputs.lint-command }}
-        run: |
-          if [[ -n "$LINT_COMMAND" ]]; then
-            bash -lc "$LINT_COMMAND"
-          elif bun -e 'const p = await Bun.file("package.json").json(); process.exit(p.scripts?.lint ? 0 : 1);'; then
-            bun run lint
-          else
-            echo "⏭️ No lint script — skipping"
-          fi
-
-      - name: Build
-        env:
-          BUILD_COMMAND: ${{ inputs.build-command }}
-        run: |
-          if [[ -n "$BUILD_COMMAND" ]]; then
-            bash -lc "$BUILD_COMMAND"
-          elif bun -e 'const p = await Bun.file("package.json").json(); process.exit(p.scripts?.build ? 0 : 1);'; then
-            bun run build
-          else
-            echo "⏭️ No build script — skipping"
-          fi
-
-      - name: Type check
-        env:
-          CHECK_COMMAND: ${{ inputs.check-command }}
-        run: |
-          if [[ -n "$CHECK_COMMAND" ]]; then
-            bash -lc "$CHECK_COMMAND"
-          elif bun -e 'const p = await Bun.file("package.json").json(); process.exit(p.scripts?.check ? 0 : 1);'; then
-            bun run check
-          else
-            echo "⏭️ No check script — skipping"
-          fi
-
-      - name: Install Playwright browser
-        env:
-          PLAYWRIGHT_BROWSER: ${{ inputs.playwright-browser }}
-        run: |
-          if [[ -n "$PLAYWRIGHT_BROWSER" ]]; then
-            bunx playwright install --with-deps "$PLAYWRIGHT_BROWSER"
-          else
-            echo "⏭️ No Playwright browser requested — skipping"
-          fi
+      - name: Check formatting
+        run: bun run format:check
 
       - name: Test
-        env:
-          TEST_COMMAND: ${{ inputs.test-command }}
-        run: |
-          if [[ -n "$TEST_COMMAND" ]]; then
-            bash -lc "$TEST_COMMAND"
-          elif rg --files -g '*.test.ts' -g '*.test.tsx' -g '*.spec.ts' -g '*.spec.tsx' | rg -q '.'; then
-            bun test
-          else
-            echo "⏭️ No test files found — skipping"
-          fi
+        run: bun test
