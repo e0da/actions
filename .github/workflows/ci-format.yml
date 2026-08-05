@@ -1,0 +1,27 @@
+name: CI Format
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the format job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      bun-image:
+        description: "Bun image tag used to run the formatter."
+        required: false
+        type: string
+        default: oven/bun:1
+
+jobs:
+  format:
+    name: Format
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check formatting
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w "${{ inputs.bun-image }}" \
+            sh -c 'bun install --frozen-lockfile && bun run format:check'
