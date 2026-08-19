@@ -62,18 +62,22 @@ jobs:
 
 ### `ci-typescript-bun.yml` — TypeScript/Bun repos
 
-Runs `bun install`, exports optional CI env entries, then skips any step whose
-script doesn't exist in `package.json`:
+Runs `bun install`, exports optional CI env entries, runs these package scripts
+when present, and then runs `bun test`:
 
+- `bun run format:check`
 - `bun run lint`
 - `bun run build`
-- `bun run check` (tsc)
-- `bun test` (only if test files are found)
+- `bun run check`
 
-Callers can override `runner`, `lint-command`, `build-command`,
-`check-command`, and `test-command`, request a Playwright browser with
-`playwright-browser`, and pass newline-delimited non-secret CI environment
-entries through `env`.
+The test step always runs; callers can replace it with `test-command`. Callers
+can also override the format, lint, build, and check commands, request
+`chromium`, `firefox`, or `webkit` with `playwright-browser`, and pass
+newline-delimited non-secret CI environment entries through `env`.
+
+The workflow reads package metadata through Bun. It does not scan repository
+files, install ripgrep, or install OS packages. The requested Playwright browser
+payload installs after the caller's frozen dependency install.
 
 ### `ci-node-npm.yml` — Node repos with a `package-lock.json`
 
