@@ -17,7 +17,7 @@ on:
         description: "Unity editor version expected under /Applications/Unity/Hub/Editor."
         required: false
         type: string
-        default: 6000.3.2f1
+        default: 6000.3.22f1
       project-path:
         description: "Path to the Unity project in the caller repository."
         required: true
@@ -121,6 +121,8 @@ jobs:
           UNITY_VERSION: ${{ inputs['unity-version'] }}
           BUILD_TARGET: ${{ inputs['build-target'] }}
           BUILD_OUTPUT_DIR: ${{ inputs['build-output-dir'] }}
+          TEST_PLATFORM: ${{ inputs['test-platform'] }}
+          TEST_RESULTS_DIR: ${{ inputs['test-results-dir'] }}
         run: |
           set -eu
 
@@ -134,6 +136,20 @@ jobs:
           case "$BUILD_OUTPUT_DIR" in
             ""|/|.|/*|*..*)
               echo "::error::unsafe build-output-dir: ${BUILD_OUTPUT_DIR:-<empty>}"
+              exit 2
+              ;;
+          esac
+
+          case "$TEST_RESULTS_DIR" in
+            ""|/|.|/*|*..*)
+              echo "::error::unsafe test-results-dir: ${TEST_RESULTS_DIR:-<empty>}"
+              exit 2
+              ;;
+          esac
+
+          case "$TEST_PLATFORM" in
+            ""|/|.|*/*|*..*)
+              echo "::error::unsafe test-platform: ${TEST_PLATFORM:-<empty>}"
               exit 2
               ;;
           esac
@@ -220,15 +236,21 @@ jobs:
         run: |
           set -eu
           mkdir -p "$TEST_RESULTS_DIR" "$UNITY_LOG_DIR"
+          test_results_file="$TEST_RESULTS_DIR/${TEST_PLATFORM}.xml"
+          rm -f "$test_results_file"
           "$UNITY_EXECUTABLE" \
             -batchmode \
-            -quit \
             -nographics \
             -projectPath "$PROJECT_PATH" \
             -runTests \
             -testPlatform "$TEST_PLATFORM" \
-            -testResults "$TEST_RESULTS_DIR/${TEST_PLATFORM}.xml" \
+            -testResults "$test_results_file" \
             -logFile "$UNITY_LOG_DIR/tests-${TEST_PLATFORM}.log"
+
+          if [ ! -s "$test_results_file" ]; then
+            echo "::error::Unity Test Runner did not create a non-empty results file: $test_results_file"
+            exit 1
+          fi
 
       - name: Build Android player
         env:

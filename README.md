@@ -190,7 +190,10 @@ requires the requested Unity editor version under `/Applications/Unity/Hub`,
 requires Android Build Support with SDK, NDK, and OpenJDK, runs the
 caller-owned repository check command, opens the project in batch mode, runs
 Unity tests, invokes the caller-owned static build method, and uploads the build
-artifact plus Unity logs.
+artifact plus Unity logs. The reusable contract defaults to Unity `6000.3.22f1`
+and requires a non-empty Unity Test Runner result XML whenever tests are
+enabled. Test results and logs are retained by the always-running diagnostic
+artifact upload, including when a test or build step fails.
 
 Callers must provide `project-path` and `build-method`. Common overrides are
 `runner`, `runner-profile`, `unity-version`, `check-command`, `run-tests`,
