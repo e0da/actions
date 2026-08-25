@@ -175,12 +175,46 @@ jobs:
           repo="${IMAGE%@*}"          # ghcr.io/e0da/<svc>
           digest="${IMAGE#*@}"        # sha256:<hex>
           path="${repo#ghcr.io/}"     # e0da/<svc>
-          # GHCR's registry API accepts Docker-style Basic auth. Build the same
-          # username:token credential shape used by deploy-compose's ephemeral
-          # Docker config; strip base64 wrapping because this runs on Linux ARC.
-          auth_b64="$(printf '%s:%s' "${GH_USER}" "${GH_TOKEN}" | base64 | tr -d '\n')"
+          # GHCR implements the OCI Distribution bearer challenge. Exchange the
+          # caller credential for a repository-scoped pull token before asking
+          # for the exact manifest digest.
+          command -v jq >/dev/null || {
+            echo "::error::GHCR digest check requires jq to parse the token response." >&2
+            exit 1
+          }
+          token_response="$(mktemp)"
+          trap 'rm -f "${token_response}"' EXIT
+          if ! token_status="$(curl -sS --max-filesize 32768 -o "${token_response}" -w '%{http_code}' \
+            --get \
+            --user "${GH_USER}:${GH_TOKEN}" \
+            --data-urlencode "service=ghcr.io" \
+            --data-urlencode "scope=repository:${path}:pull" \
+            "https://ghcr.io/token")"; then
+            echo "::error::GHCR token request failed before receiving an HTTP response." >&2
+            exit 1
+          fi
+          case "${token_status}" in
+            200)
+              ;;
+            401|403)
+              echo "::error::GHCR token request could not authenticate (HTTP ${token_status}). Configure GHCR_TOKEN with read:packages for this repository, or call this workflow from a repository token that can read the package." >&2
+              exit 1
+              ;;
+            404)
+              echo "::error::GHCR token endpoint not found (HTTP ${token_status})." >&2
+              exit 1
+              ;;
+            *)
+              echo "::error::GHCR token request failed (HTTP ${token_status})." >&2
+              exit 1
+              ;;
+          esac
+          if ! bearer_token="$(jq -er '(.token // .access_token) | strings | select(length > 0 and length <= 16384)' "${token_response}" 2>/dev/null)"; then
+            echo "::error::GHCR token endpoint returned an invalid bearer token." >&2
+            exit 1
+          fi
           status="$(curl -sS -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Basic ${auth_b64}" \
+            -H "Authorization: Bearer ${bearer_token}" \
             -H "Accept: application/vnd.oci.image.manifest.v1+json" \
             -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
             -H "Accept: application/vnd.oci.image.index.v1+json" \
