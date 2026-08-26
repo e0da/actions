@@ -299,6 +299,9 @@ jobs:
     env:
       CALLER_HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
       HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN || github.token }}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: "url.https://x-access-token:${{ secrets.HOMEBREW_GITHUB_API_TOKEN || github.token }}@github.com/.insteadOf"
+      GIT_CONFIG_VALUE_0: "https://github.com/"
       HOMEBREW_TAP: ${{ inputs.homebrew-tap }}
       HOMEBREW_FORMULA: ${{ inputs.homebrew-formula }}
       INSTALLED_SMOKE_COMMAND: ${{ inputs.installed-smoke-command }}
@@ -312,14 +315,6 @@ jobs:
             echo "HOMEBREW_GITHUB_API_TOKEN secret is required for e0da/internal Homebrew proof." >&2
             exit 1
           fi
-
-      - name: Configure private GitHub access
-        shell: sh
-        run: |
-          set -eu
-          git config --global \
-            url."https://x-access-token:${HOMEBREW_GITHUB_API_TOKEN}@github.com/".insteadOf \
-            "https://github.com/"
 
       - name: Tap and fetch formula
         shell: sh
