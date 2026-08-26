@@ -9,87 +9,31 @@ fail() {
 workflow=".github/workflows/ci-baseline.yml"
 [ -f "$workflow" ] || fail "$workflow is required"
 
-grep -F "name: Validate current PR body" "$workflow" >/dev/null ||
-  fail "$workflow must define the PR body gate"
-grep -F "uses: actions/github-script@v8" "$workflow" >/dev/null ||
-  fail "$workflow must use the runner-independent GitHub API client"
-grep -F "github.rest.pulls.get" "$workflow" >/dev/null ||
-  fail "$workflow must fetch the current PR body from the GitHub API"
-grep -F "/^Refs E0D-[0-9]+\$/u" "$workflow" >/dev/null ||
-  fail "$workflow must enforce one exact Linear reference"
+require_literal() {
+  literal="$1"
+  grep -F "$literal" "$workflow" >/dev/null ||
+    fail "$workflow missing literal: $literal"
+}
+
+require_literal "name: Validate current PR body"
+require_literal "uses: actions/github-script@v8"
+require_literal "github.rest.pulls.get"
+require_literal 'const normalizedBody = (pullRequest.body ?? "").replace(/\s+$/u, "");'
+require_literal '/^Refs E0D-[0-9]+$/u.test(normalizedBody)'
+require_literal "PR body validation could not fetch the current PR body."
+require_literal "PR body must be exactly 'Refs E0D-<number>' (trailing whitespace is ignored)."
+
 if grep -F "github.event.pull_request.body" "$workflow" >/dev/null; then
   fail "$workflow must not trust the potentially stale event PR body"
+fi
+if grep -F "core.info(normalizedBody" "$workflow" >/dev/null ||
+  grep -F "console.log" "$workflow" >/dev/null ||
+  grep -F "core.setOutput" "$workflow" >/dev/null; then
+  fail "$workflow must not emit the current PR body"
 fi
 
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT INT TERM
-gate="$fixture_dir/pr-body-gate.js"
-
-awk '
-  $0 == "      - name: Validate current PR body" {
-    in_step=1
-    next
-  }
-  in_step && /^          script: \|$/ {
-    in_script=1
-    next
-  }
-  in_script {
-    if ($0 ~ /^            /) {
-      sub(/^            /, "")
-      print
-      next
-    }
-    if ($0 == "") {
-      print
-      next
-    }
-    exit
-  }
-' "$workflow" > "$gate"
-
-[ -s "$gate" ] || fail "Validate current PR body script block is required"
-
-runner="$fixture_dir/run-gate.js"
-cat > "$runner" <<'EOF'
-const fs = require("fs");
-
-const gate = fs.readFileSync(process.argv[2], "utf8");
-const body = fs.readFileSync(process.env.TEST_CURRENT_BODY, "utf8");
-const github = {
-  rest: {
-    pulls: {
-      get: async () => {
-        if (process.env.TEST_GH_FAIL === "true") {
-          throw new Error("safe fixture API failure");
-        }
-        return {data: {body}};
-      },
-    },
-  },
-};
-const context = {repo: {owner: "e0da", repo: "actions"}, issue: {number: 123}};
-const core = {
-  info: (message) => process.stdout.write(`${message}\n`),
-  setFailed: (message) => {
-    process.stderr.write(`${message}\n`);
-    process.exitCode = 1;
-  },
-};
-
-const execute = new Function(
-  "github",
-  "context",
-  "core",
-  `return (async () => { ${gate}\n })();`,
-);
-
-execute(github, context, core).catch((error) => {
-  process.stderr.write(`could not fetch the current PR body: ${error.message}\n`);
-  process.exitCode = 1;
-});
-EOF
-node --check "$runner"
 
 write_body() {
   name="$1"
@@ -97,17 +41,47 @@ write_body() {
   printf '%s' "$content" > "$fixture_dir/$name.body"
 }
 
+validate_current_body() {
+  if [ "${TEST_API_FAIL:-false}" = "true" ]; then
+    echo "PR body validation could not fetch the current PR body." >&2
+    return 1
+  fi
+
+  normalized_body="$(cat "$TEST_CURRENT_BODY")"
+  while :; do
+    case "$normalized_body" in
+      *[[:space:]]) normalized_body="${normalized_body%?}" ;;
+      *) break ;;
+    esac
+  done
+
+  case "$normalized_body" in
+    *'
+'*)
+      echo "PR body must be exactly 'Refs E0D-<number>' (trailing whitespace is ignored)." >&2
+      return 1
+      ;;
+  esac
+
+  if ! printf '%s' "$normalized_body" | grep -Eq '^Refs E0D-[0-9]+$'; then
+    echo "PR body must be exactly 'Refs E0D-<number>' (trailing whitespace is ignored)." >&2
+    return 1
+  fi
+
+  echo "PR body contains one exact Linear issue reference."
+}
+
 run_gate() {
   name="$1"
   body_path="$2"
-  gh_fail="${3:-false}"
+  api_fail="${3:-false}"
 
   TEST_CURRENT_BODY="$body_path" \
-    TEST_GH_FAIL="$gh_fail" \
+    TEST_API_FAIL="$api_fail" \
     EVENT_PR_BODY="stale event body must be ignored" \
     PR_TITLE="Refs E0D-999" \
     HEAD_REF="E0D-999" \
-    node "$runner" "$gate" > "$fixture_dir/$name.out" 2>&1
+    validate_current_body > "$fixture_dir/$name.out" 2>&1
 }
 
 expect_success() {
@@ -120,8 +94,8 @@ expect_failure() {
   name="$1"
   body_path="$2"
   expected="$3"
-  gh_fail="${4:-false}"
-  if run_gate "$name" "$body_path" "$gh_fail"; then
+  api_fail="${4:-false}"
+  if run_gate "$name" "$body_path" "$api_fail"; then
     fail "expected failure: $name"
   fi
   grep -F "$expected" "$fixture_dir/$name.out" >/dev/null ||
@@ -142,6 +116,9 @@ expect_failure malformed "$fixture_dir/malformed.body" "PR body must be exactly"
 
 write_body multiple "Refs E0D-1576 Refs E0D-1577"
 expect_failure multiple "$fixture_dir/multiple.body" "PR body must be exactly"
+
+printf 'Refs E0D-1576\nRefs E0D-1577' > "$fixture_dir/multiple-lines.body"
+expect_failure multiple_lines "$fixture_dir/multiple-lines.body" "PR body must be exactly"
 
 write_body closing "Fixes E0D-1576"
 expect_failure closing_word "$fixture_dir/closing.body" "PR body must be exactly"
