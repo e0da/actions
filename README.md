@@ -23,6 +23,7 @@ ARM64 container execution.
 Checks that apply universally:
 
 - **PR title**: must follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat|fix|chore|docs|refactor|test|ci: description`)
+- **PR body**: must be exactly `Refs E0D-<number>` after trailing whitespace is removed; validation reads the current GitHub body so editing the body and rerunning the check recovers without another commit
 - **Secret scan**: installs a pinned [Gitleaks](https://github.com/gitleaks/gitleaks) CLI release and scans full history
 
 Branch names are intentionally not checked here. Graphite owns branch naming and

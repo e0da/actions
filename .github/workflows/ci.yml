@@ -74,6 +74,7 @@ jobs:
           sh tests/actions_self_ci_arc_route.sh
           sh tests/ci_typescript_bun_contract.sh
           sh tests/ci_node_npm_contract.sh
+          sh tests/ci_baseline_pr_body.sh
           bash tests/deploy_k3s_ghcr_auth.sh
           sh tests/hosted_drift_report.sh
           sh tests/runner_manifest_validation.sh
