@@ -117,33 +117,29 @@ jobs:
           echo "✅ PR title OK: $PR_TITLE"
 
       - name: Validate current PR body
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
+        uses: actions/github-script@v8
+        with:
+          script: |
+            let pullRequest;
+            try {
+              const response = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+              });
+              pullRequest = response.data;
+            } catch (_error) {
+              core.setFailed("PR body validation could not fetch the current PR body.");
+              return;
+            }
 
-          if [[ -z "$PR_NUMBER" ]]; then
-            echo "::error::PR body validation requires a pull request number."
-            exit 1
-          fi
+            const normalizedBody = (pullRequest.body ?? "").replace(/\s+$/u, "");
+            if (!/^Refs E0D-[0-9]+$/u.test(normalizedBody)) {
+              core.setFailed("PR body must be exactly 'Refs E0D-<number>' (trailing whitespace is ignored).");
+              return;
+            }
 
-          if ! current_body="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""' 2>/dev/null)"; then
-            echo "::error::PR body validation could not fetch the current PR body."
-            exit 1
-          fi
-
-          while [[ "$current_body" =~ [[:space:]]$ ]]; do
-            current_body="${current_body%?}"
-          done
-
-          if [[ ! "$current_body" =~ ^Refs\ E0D-[0-9]+$ ]]; then
-            echo "::error::PR body must be exactly 'Refs E0D-<number>' (trailing whitespace is ignored)."
-            exit 1
-          fi
-
-          echo "✅ PR body contains one exact Linear issue reference."
+            core.info("PR body contains one exact Linear issue reference.");
 
   secret-scan:
     name: Secret Scan (Gitleaks)

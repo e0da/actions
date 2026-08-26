@@ -11,9 +11,11 @@ workflow=".github/workflows/ci-baseline.yml"
 
 grep -F "name: Validate current PR body" "$workflow" >/dev/null ||
   fail "$workflow must define the PR body gate"
-grep -F "current_body=\"\$(gh api \"repos/\${REPOSITORY}/pulls/\${PR_NUMBER}\"" "$workflow" >/dev/null ||
+grep -F "uses: actions/github-script@v8" "$workflow" >/dev/null ||
+  fail "$workflow must use the runner-independent GitHub API client"
+grep -F "github.rest.pulls.get" "$workflow" >/dev/null ||
   fail "$workflow must fetch the current PR body from the GitHub API"
-grep -F "^Refs\\ E0D-[0-9]+\$" "$workflow" >/dev/null ||
+grep -F "/^Refs E0D-[0-9]+\$/u" "$workflow" >/dev/null ||
   fail "$workflow must enforce one exact Linear reference"
 if grep -F "github.event.pull_request.body" "$workflow" >/dev/null; then
   fail "$workflow must not trust the potentially stale event PR body"
@@ -21,20 +23,20 @@ fi
 
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT INT TERM
-gate="$fixture_dir/pr-body-gate.sh"
+gate="$fixture_dir/pr-body-gate.js"
 
 awk '
   $0 == "      - name: Validate current PR body" {
     in_step=1
     next
   }
-  in_step && /^        run: \|$/ {
-    in_run=1
+  in_step && /^          script: \|$/ {
+    in_script=1
     next
   }
-  in_run {
-    if ($0 ~ /^          /) {
-      sub(/^          /, "")
+  in_script {
+    if ($0 ~ /^            /) {
+      sub(/^            /, "")
       print
       next
     }
@@ -46,20 +48,48 @@ awk '
   }
 ' "$workflow" > "$gate"
 
-[ -s "$gate" ] || fail "Validate current PR body run block is required"
-bash -n "$gate"
+[ -s "$gate" ] || fail "Validate current PR body script block is required"
 
-mkdir -p "$fixture_dir/bin"
-cat > "$fixture_dir/bin/gh" <<'EOF'
-#!/bin/sh
-set -eu
+runner="$fixture_dir/run-gate.js"
+cat > "$runner" <<'EOF'
+const fs = require("fs");
 
-[ "$1" = "api" ] || exit 91
-[ "$2" = "repos/e0da/actions/pulls/123" ] || exit 92
-[ "${TEST_GH_FAIL:-false}" != "true" ] || exit 93
-cat "$TEST_CURRENT_BODY"
+const gate = fs.readFileSync(process.argv[2], "utf8");
+const body = fs.readFileSync(process.env.TEST_CURRENT_BODY, "utf8");
+const github = {
+  rest: {
+    pulls: {
+      get: async () => {
+        if (process.env.TEST_GH_FAIL === "true") {
+          throw new Error("safe fixture API failure");
+        }
+        return {data: {body}};
+      },
+    },
+  },
+};
+const context = {repo: {owner: "e0da", repo: "actions"}, issue: {number: 123}};
+const core = {
+  info: (message) => process.stdout.write(`${message}\n`),
+  setFailed: (message) => {
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  },
+};
+
+const execute = new Function(
+  "github",
+  "context",
+  "core",
+  `return (async () => { ${gate}\n })();`,
+);
+
+execute(github, context, core).catch((error) => {
+  process.stderr.write(`could not fetch the current PR body: ${error.message}\n`);
+  process.exitCode = 1;
+});
 EOF
-chmod +x "$fixture_dir/bin/gh"
+node --check "$runner"
 
 write_body() {
   name="$1"
@@ -72,16 +102,12 @@ run_gate() {
   body_path="$2"
   gh_fail="${3:-false}"
 
-  PATH="$fixture_dir/bin:$PATH" \
-    GH_TOKEN=fixture-token \
-    REPOSITORY=e0da/actions \
-    PR_NUMBER=123 \
+  TEST_CURRENT_BODY="$body_path" \
+    TEST_GH_FAIL="$gh_fail" \
     EVENT_PR_BODY="stale event body must be ignored" \
     PR_TITLE="Refs E0D-999" \
     HEAD_REF="E0D-999" \
-    TEST_CURRENT_BODY="$body_path" \
-    TEST_GH_FAIL="$gh_fail" \
-    bash "$gate" > "$fixture_dir/$name.out" 2>&1
+    node "$runner" "$gate" > "$fixture_dir/$name.out" 2>&1
 }
 
 expect_success() {
