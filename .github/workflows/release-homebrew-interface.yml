@@ -87,8 +87,15 @@ on:
         required: false
         type: string
         default: ""
+      release-repo:
+        description: "Target repo (owner/name) for GitHub release asset publication; empty uses the calling repo."
+        required: false
+        type: string
+        default: ""
     secrets:
       HOMEBREW_GITHUB_API_TOKEN:
+        required: false
+      RELEASE_REPO_TOKEN:
         required: false
 
 jobs:
@@ -258,11 +265,23 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
 
+      - name: Validate cross-repo release token
+        if: inputs.release-repo != '' && inputs.release-repo != github.repository
+        shell: sh
+        env:
+          RELEASE_REPO_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+        run: |
+          set -eu
+          if [ -z "$RELEASE_REPO_TOKEN" ]; then
+            echo "RELEASE_REPO_TOKEN secret is required when release-repo differs from the calling repo." >&2
+            exit 1
+          fi
+
       - name: Publish GitHub release assets
         shell: sh
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ (inputs.release-repo != '' && inputs.release-repo != github.repository) && secrets.RELEASE_REPO_TOKEN || github.token }}
+          GH_REPO: ${{ inputs.release-repo != '' && inputs.release-repo || github.repository }}
         run: |
           set -eu
           set -- *.tar.gz

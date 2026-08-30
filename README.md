@@ -310,6 +310,7 @@ Common overrides:
 - `publish-github-release`
 - `run-homebrew-proof`
 - `installed-smoke-command`
+- `release-repo`
 
 For TypeScript/Bun products, set `setup-bun: true`; use `bun-version` when the
 repo needs a pinned Bun version. `release-env` exports newline-delimited
@@ -321,6 +322,12 @@ For the private `e0da/internal` tap, callers that leave
 `run-homebrew-proof: true` must provide `HOMEBREW_GITHUB_API_TOKEN` so Homebrew
 can read the private tap and private release assets. `publish-github-release`
 only runs on tag refs; non-tag callers fail before release publication.
+
+`release-repo` defaults to the calling repo, so a private source repo can
+publish assets to a separate public repo (e.g. a public Homebrew tap) without
+requiring a token for `brew fetch`. Setting it to any repo other than the
+caller requires the `RELEASE_REPO_TOKEN` secret, since `GITHUB_TOKEN` cannot
+write across repos.
 
 ## How to adopt
 
