@@ -306,11 +306,32 @@ jobs:
             exit 0
           fi
 
-          set -- --generate-notes
+          # `--generate-notes` summarizes GH_REPO's own commits. When
+          # release-repo differs from the source repo (e0da/actions#110),
+          # that's the tap's commits, not the artifact's — so cross-repo
+          # notes name the source explicitly instead (E0D-1613).
+          if [ "$GH_REPO" = "$GITHUB_REPOSITORY" ]; then
+            set -- --generate-notes
+          else
+            set -- --notes "Built from \`$GITHUB_REPOSITORY@$GITHUB_SHA\` at tag \`$GITHUB_REF_NAME\`."
+          fi
           case "$GITHUB_REF_NAME" in
             *-*) set -- "$@" --prerelease --latest=false ;;
           esac
           gh release create "$GITHUB_REF_NAME" "$archive" "$checksum" "$@"
+
+          # Detector: a cross-repo release whose notes don't name the source
+          # repo/commit should fail the job, not publish silently-wrong notes.
+          if [ "$GH_REPO" != "$GITHUB_REPOSITORY" ]; then
+            body=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+            case "$body" in
+              *"$GITHUB_REPOSITORY@$GITHUB_SHA"*) ;;
+              *)
+                echo "published release notes do not name the source repo/commit ($GITHUB_REPOSITORY@$GITHUB_SHA)" >&2
+                exit 1
+                ;;
+            esac
+          fi
 
       - name: Bump Homebrew formula
         if: inputs.homebrew-formula-path != ''
