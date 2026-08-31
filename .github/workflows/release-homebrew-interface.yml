@@ -439,4 +439,14 @@ jobs:
         shell: sh
         run: |
           set -eu
-          sh -c "$INSTALLED_SMOKE_COMMAND"
+          # Echo the command before running it. `test "$(foo)" = "$BAR"` is the
+          # natural shape for this input and `test` is silent, so a failure
+          # otherwise produces a red step with an empty log and the reader has
+          # to open the calling repo's workflow to learn what was asserted.
+          # Every other gate in this workflow names its own defect; this one
+          # could not (E0D-1617).
+          printf 'installed smoke command: %s\n' "$INSTALLED_SMOKE_COMMAND"
+          sh -c "$INSTALLED_SMOKE_COMMAND" || {
+            echo "installed smoke command failed: $INSTALLED_SMOKE_COMMAND" >&2
+            exit 1
+          }
