@@ -341,6 +341,24 @@ jobs:
             | sed -E "s#^(  url \").*(\")\$#\\1${url}\\2#" \
             | sed -E "s#^(  version \").*(\")\$#\\1${version}\\2#" \
             | sed -E "s#^(  sha256 \").*(\")\$#\\1${sha256}\\2#")
+
+          # Each sed is checked independently, not just "updated != content" —
+          # one pattern failing to match (reordered/reformatted field) while
+          # the others hit would still change the file and pass a coarser
+          # diff check, leaving one field silently stale (E0D-1614).
+          printf '%s\n' "$updated" | grep -qF "  url \"${url}\"" || {
+            echo "bump Homebrew formula: url line not updated in $FORMULA_PATH" >&2
+            exit 1
+          }
+          printf '%s\n' "$updated" | grep -qF "  version \"${version}\"" || {
+            echo "bump Homebrew formula: version line not updated in $FORMULA_PATH" >&2
+            exit 1
+          }
+          printf '%s\n' "$updated" | grep -qF "  sha256 \"${sha256}\"" || {
+            echo "bump Homebrew formula: sha256 line not updated in $FORMULA_PATH" >&2
+            exit 1
+          }
+
           content_b64=$(printf '%s\n' "$updated" | base64 | tr -d '\n')
           gh api -X PUT "repos/$GH_REPO/contents/$FORMULA_PATH" \
             -f message="${GITHUB_REF_NAME}: bump url/version/sha256" \
