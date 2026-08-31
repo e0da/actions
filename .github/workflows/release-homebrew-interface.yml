@@ -92,6 +92,11 @@ on:
         required: false
         type: string
         default: ""
+      homebrew-formula-path:
+        description: "Path (in release-repo) to the tap's Formula/<name>.rb; empty skips the automated url/version/sha256 bump. The file must already exist — this updates the release fields, it does not author a formula from scratch."
+        required: false
+        type: string
+        default: ""
     secrets:
       HOMEBREW_GITHUB_API_TOKEN:
         required: false
@@ -307,10 +312,45 @@ jobs:
           esac
           gh release create "$GITHUB_REF_NAME" "$archive" "$checksum" "$@"
 
+      - name: Bump Homebrew formula
+        if: inputs.homebrew-formula-path != ''
+        shell: sh
+        env:
+          GH_TOKEN: ${{ (inputs.release-repo != '' && inputs.release-repo != github.repository) && secrets.RELEASE_REPO_TOKEN || github.token }}
+          GH_REPO: ${{ inputs.release-repo != '' && inputs.release-repo || github.repository }}
+          FORMULA_PATH: ${{ inputs.homebrew-formula-path }}
+        run: |
+          set -eu
+          set -- *.tar.gz
+          archive="$1"
+          sha256=$(awk '{print $1}' "$archive.sha256")
+          version="${GITHUB_REF_NAME#v}"
+          url="https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/$archive"
+
+          # Bumps the three release-volatile fields of an already-authored
+          # formula (desc/homepage/test/depends_on stay human-owned); this is
+          # the missing half of Gate 3 (E0D-1610) — without it, "Homebrew
+          # Installed Proof" races a formula a human hasn't updated yet.
+          existing=$(gh api "repos/$GH_REPO/contents/$FORMULA_PATH") || {
+            echo "bump Homebrew formula: $FORMULA_PATH not found in $GH_REPO — author it once by hand first" >&2
+            exit 1
+          }
+          sha=$(printf '%s' "$existing" | jq -r '.sha')
+          content=$(printf '%s' "$existing" | jq -r '.content' | base64 -d)
+          updated=$(printf '%s\n' "$content" \
+            | sed -E "s#^(  url \").*(\")\$#\\1${url}\\2#" \
+            | sed -E "s#^(  version \").*(\")\$#\\1${version}\\2#" \
+            | sed -E "s#^(  sha256 \").*(\")\$#\\1${sha256}\\2#")
+          content_b64=$(printf '%s\n' "$updated" | base64 | tr -d '\n')
+          gh api -X PUT "repos/$GH_REPO/contents/$FORMULA_PATH" \
+            -f message="${GITHUB_REF_NAME}: bump url/version/sha256" \
+            -f content="$content_b64" \
+            -f sha="$sha"
+
   homebrew-proof:
     name: Homebrew Installed Proof
-    needs: release-interface
-    if: inputs.run-homebrew-proof
+    needs: [release-interface, publish-github-release]
+    if: inputs.run-homebrew-proof && (needs.publish-github-release.result == 'success' || needs.publish-github-release.result == 'skipped')
     runs-on: ${{ inputs.install-runner }}
     permissions:
       contents: read
