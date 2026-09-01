@@ -9,7 +9,7 @@ for literal in \
   '      artifact-path:' \
   '            echo "gist-id and gist-token must be configured together" >&2' \
   '            --request PATCH' \
-  'throw new Error(`Gist read-back mismatch: ${name}`)'
+  'Gist read-back mismatch:'
 do
   grep -F -- "$literal" "$workflow" >/dev/null || {
     echo "release-gist contract missing: $literal" >&2
