@@ -1,0 +1,93 @@
+name: Release Gist
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the release job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      bun-version:
+        description: "Bun version passed to oven-sh/setup-bun."
+        required: false
+        type: string
+        default: latest
+      build-command:
+        description: "Command that creates the exact gist payload."
+        required: true
+        type: string
+      payload-path:
+        description: "Path to the GitHub Gist API JSON payload."
+        required: true
+        type: string
+      artifact-path:
+        description: "Path uploaded as release evidence."
+        required: true
+        type: string
+      artifact-name:
+        description: "Name of the uploaded release evidence artifact."
+        required: false
+        type: string
+        default: gist-payload
+      gist-id:
+        description: "Existing gist to update. Empty builds evidence without publishing."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      gist-token:
+        description: "Fine-grained token authorized to update the configured gist."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-release:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun-version }}
+      - name: Build exact gist payload
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -lc "$BUILD_COMMAND"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}-${{ github.sha }}
+          path: ${{ inputs.artifact-path }}
+          if-no-files-found: error
+      - name: Update configured gist
+        env:
+          GIST_ID: ${{ inputs.gist-id }}
+          GIST_TOKEN: ${{ secrets.gist-token }}
+          PAYLOAD_PATH: ${{ inputs.payload-path }}
+        run: |
+          if [[ -z "$GIST_ID" && -z "$GIST_TOKEN" ]]; then
+            echo "Gist target is not configured; build artifact only."
+            exit 0
+          fi
+          if [[ -z "$GIST_ID" || -z "$GIST_TOKEN" ]]; then
+            echo "gist-id and gist-token must be configured together" >&2
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error \
+            --request PATCH \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GIST_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data-binary "@$PAYLOAD_PATH" \
+            "https://api.github.com/gists/$GIST_ID" > gist-response.json
+          # shellcheck disable=SC2016
+          GIST_PAYLOAD="$PAYLOAD_PATH" bun -e '
+            const expected = await Bun.file(process.env.GIST_PAYLOAD).json();
+            const actual = await Bun.file("gist-response.json").json();
+            for (const [name, file] of Object.entries(expected.files)) {
+              if (actual.files?.[name]?.content !== file.content) {
+                throw new Error(`Gist read-back mismatch: ${name}`);
+              }
+            }
+          '
