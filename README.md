@@ -332,6 +332,7 @@ Common overrides:
 - `run-homebrew-proof`
 - `installed-smoke-command`
 - `release-repo`
+- `release-tag-prefix`
 
 For TypeScript/Bun products, set `setup-bun: true`; use `bun-version` when the
 repo needs a pinned Bun version. `release-env` exports newline-delimited
@@ -345,6 +346,13 @@ fixes gzip metadata, rejects unsafe entry types and link targets, and uploads
 `release-archive-metadata.json` beside the archive and checksum. The receipt
 lists every archived entry and the complete normalization contract. The default
 remains the legacy `tar -czf` path so existing callers do not change silently.
+
+`release-tag-prefix` namespaces releases when multiple products publish assets
+to the same `release-repo`. It defaults to empty, preserving the source tag for
+existing callers. A value such as `world-modeler-` maps source tag `v1.2.3` to
+destination tag `world-modeler-v1.2.3`; artifact names, release notes,
+prerelease classification, and formula version `1.2.3` remain source-tag based.
+Prefixes must be lowercase hyphen-delimited product names ending in `-`.
 
 For the private `e0da/internal` tap, callers that leave
 `run-homebrew-proof: true` must provide `HOMEBREW_GITHUB_API_TOKEN` so Homebrew
