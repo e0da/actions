@@ -97,6 +97,11 @@ on:
         required: false
         type: string
         default: ""
+      release-tag-prefix:
+        description: "Optional product namespace prepended to the source tag in the destination release repo, for example world-modeler-."
+        required: false
+        type: string
+        default: ""
       homebrew-formula-path:
         description: "Path (in release-repo) to the tap's Formula/<name>.rb; empty skips the automated url/version/sha256 bump. The file must already exist — this updates the release fields, it does not author a formula from scratch."
         required: false
@@ -114,6 +119,8 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
+    outputs:
+      destination-tag: ${{ steps.release-tag.outputs.destination-tag }}
 
     steps:
       - name: Check out repository
@@ -173,6 +180,38 @@ jobs:
             [ -n "$package" ] || continue
             brew install "$package"
           done
+
+      - name: Resolve destination release tag
+        id: release-tag
+        shell: sh
+        env:
+          RELEASE_TAG_PREFIX: ${{ inputs.release-tag-prefix }}
+        run: |
+          set -eu
+          # release-tag-namespace-script:start
+          if [ -n "$RELEASE_TAG_PREFIX" ]; then
+            case "$RELEASE_TAG_PREFIX" in
+              *[!a-z0-9-]*)
+                echo "release-tag-prefix contains an invalid byte" >&2
+                exit 2
+                ;;
+            esac
+            case "$RELEASE_TAG_PREFIX" in
+              *-) ;;
+              *)
+                echo "release-tag-prefix must end with a hyphen: $RELEASE_TAG_PREFIX" >&2
+                exit 2
+                ;;
+            esac
+            namespace=${RELEASE_TAG_PREFIX%-}
+            if ! printf '%s\n' "$namespace" | LC_ALL=C grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$'; then
+              echo "invalid release-tag-prefix: $RELEASE_TAG_PREFIX" >&2
+              exit 2
+            fi
+          fi
+          destination_tag="${RELEASE_TAG_PREFIX}${GITHUB_REF_NAME}"
+          echo "destination-tag=$destination_tag" >> "$GITHUB_OUTPUT"
+          # release-tag-namespace-script:end
 
       - name: Run release metadata
         shell: sh
@@ -418,6 +457,7 @@ jobs:
       - name: Publish GitHub release assets
         shell: sh
         env:
+          DESTINATION_TAG: ${{ needs.release-interface.outputs.destination-tag }}
           GH_TOKEN: ${{ (inputs.release-repo != '' && inputs.release-repo != github.repository) && secrets.RELEASE_REPO_TOKEN || github.token }}
           GH_REPO: ${{ inputs.release-repo != '' && inputs.release-repo || github.repository }}
         run: |
@@ -434,8 +474,8 @@ jobs:
             exit 1
           }
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$archive" "$checksum" --clobber
+          if gh release view "$DESTINATION_TAG" >/dev/null 2>&1; then
+            gh release upload "$DESTINATION_TAG" "$archive" "$checksum" --clobber
             exit 0
           fi
 
@@ -451,12 +491,12 @@ jobs:
           case "$GITHUB_REF_NAME" in
             *-*) set -- "$@" --prerelease --latest=false ;;
           esac
-          gh release create "$GITHUB_REF_NAME" "$archive" "$checksum" "$@"
+          gh release create "$DESTINATION_TAG" "$archive" "$checksum" "$@"
 
           # Detector: a cross-repo release whose notes don't name the source
           # repo/commit should fail the job, not publish silently-wrong notes.
           if [ "$GH_REPO" != "$GITHUB_REPOSITORY" ]; then
-            body=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+            body=$(gh release view "$DESTINATION_TAG" --json body -q .body)
             case "$body" in
               *"$GITHUB_REPOSITORY@$GITHUB_SHA"*) ;;
               *)
@@ -470,6 +510,7 @@ jobs:
         if: inputs.homebrew-formula-path != ''
         shell: sh
         env:
+          DESTINATION_TAG: ${{ needs.release-interface.outputs.destination-tag }}
           GH_TOKEN: ${{ (inputs.release-repo != '' && inputs.release-repo != github.repository) && secrets.RELEASE_REPO_TOKEN || github.token }}
           GH_REPO: ${{ inputs.release-repo != '' && inputs.release-repo || github.repository }}
           FORMULA_PATH: ${{ inputs.homebrew-formula-path }}
@@ -479,7 +520,7 @@ jobs:
           archive="$1"
           sha256=$(awk '{print $1}' "$archive.sha256")
           version="${GITHUB_REF_NAME#v}"
-          url="https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/$archive"
+          url="https://github.com/$GH_REPO/releases/download/$DESTINATION_TAG/$archive"
 
           # Bumps the three release-volatile fields of an already-authored
           # formula (desc/homepage/test/depends_on stay human-owned); this is
