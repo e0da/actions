@@ -208,6 +208,21 @@ Callers must provide `project-path` and `build-method`. Common overrides are
 `runner`, `runner-profile`, `unity-version`, `check-command`, `run-tests`,
 `test-platform`, `build-target`, `build-output-dir`, and `artifact-name`.
 
+### `release-gist.yml` — Generated gist projection
+
+Builds and uploads a caller-owned gist payload, then optionally patches an
+existing configured gist. The workflow never creates a gist and requires the
+gist id and token together.
+
+Set `managed-manifest-file` when one payload file contains a `files[].path`
+allowlist. The workflow reads the previous remote manifest, deletes files that
+left that managed set, preserves files the previous manifest did not own, and
+verifies the complete resulting filename set plus every published byte. Leaving
+the input empty preserves the older update-and-subset-verification behavior. On
+first adoption, when the remote gist has no named manifest yet, the explicit
+managed-manifest setting claims its existing files so the payload can converge
+to an exact projection.
+
 ### `release-rust.yml` — Rust release artifacts
 
 Reusable release workflow for tagged Rust binary releases. It validates the
