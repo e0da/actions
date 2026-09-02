@@ -320,6 +320,7 @@ Common overrides:
 - `build-output-dir`
 - `built-binary-name`
 - `artifact-name`
+- `deterministic-archive`
 - `setup-bun`
 - `bun-version`
 - `bun-install-command`
@@ -337,6 +338,13 @@ repo needs a pinned Bun version. `release-env` exports newline-delimited
 `KEY=VALUE` entries before every release-interface verb, and
 `homebrew-build-packages` installs newline-delimited build-time Homebrew tools
 such as `sops` on macOS release runners.
+
+`deterministic-archive: true` opts into reproducible archive bytes. The workflow
+sorts staged paths, normalizes ownership, names, mtimes, and portable modes,
+fixes gzip metadata, rejects unsafe entry types and link targets, and uploads
+`release-archive-metadata.json` beside the archive and checksum. The receipt
+lists every archived entry and the complete normalization contract. The default
+remains the legacy `tar -czf` path so existing callers do not change silently.
 
 For the private `e0da/internal` tap, callers that leave
 `run-homebrew-proof: true` must provide `HOMEBREW_GITHUB_API_TOKEN` so Homebrew
