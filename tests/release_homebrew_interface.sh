@@ -79,6 +79,14 @@ require_literal "$workflow" "GH_REPO: \${{ inputs.release-repo != '' && inputs.r
 require_literal "$workflow" "if [ \"\$GH_REPO\" = \"\$GITHUB_REPOSITORY\" ]; then"
 require_literal "$workflow" "set -- --notes \"Built from \\\`\$GITHUB_REPOSITORY@\$GITHUB_SHA\\\` at tag \\\`\$GITHUB_REF_NAME\\\`.\""
 require_literal "$workflow" "gh release create \"\$DESTINATION_TAG\""
+require_literal "$workflow" "gh release download \"\$DESTINATION_TAG\""
+require_literal "$workflow" "gh release upload \"\$DESTINATION_TAG\" \"\$asset\""
+require_literal "$workflow" "cmp -s \"\$asset\" \"\$existing_release_dir/\$asset\""
+require_literal "$workflow" "release asset differs from the existing immutable asset"
+
+if grep -F -- '--clobber' "$workflow" >/dev/null; then
+  fail "existing release assets must never be overwritten"
+fi
 require_literal "$workflow" "if [ \"\$GH_REPO\" != \"\$GITHUB_REPOSITORY\" ]; then"
 require_literal "$workflow" "body=\$(gh release view \"\$DESTINATION_TAG\" --json body -q .body)"
 require_literal "$workflow" "published release notes do not name the source repo/commit"

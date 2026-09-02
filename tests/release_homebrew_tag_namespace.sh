@@ -72,8 +72,8 @@ grep -F 'default: ""' "$workflow" >/dev/null ||
   fail "release-tag-prefix must default to empty"
 grep -F "gh release view \"\$DESTINATION_TAG\"" "$workflow" >/dev/null ||
   fail "release view must use the destination tag"
-grep -F "gh release upload \"\$DESTINATION_TAG\"" "$workflow" >/dev/null ||
-  fail "release upload must use the destination tag"
+grep -F "gh release download \"\$DESTINATION_TAG\"" "$workflow" >/dev/null ||
+  fail "release idempotence check must use the destination tag"
 grep -F "gh release create \"\$DESTINATION_TAG\"" "$workflow" >/dev/null ||
   fail "release creation must use the destination tag"
 grep -F "releases/download/\$DESTINATION_TAG/\$archive" "$workflow" >/dev/null ||

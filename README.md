@@ -346,6 +346,9 @@ fixes gzip metadata, rejects unsafe entry types and link targets, and uploads
 `release-archive-metadata.json` beside the archive and checksum. The receipt
 lists every archived entry and the complete normalization contract. The default
 remains the legacy `tar -czf` path so existing callers do not change silently.
+Once a destination release exists, publication is immutable: reruns accept
+byte-identical archive and checksum assets without rewriting them and fail if
+either existing asset differs.
 
 `release-tag-prefix` namespaces releases when multiple products publish assets
 to the same `release-repo`. It defaults to empty, preserving the source tag for
