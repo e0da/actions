@@ -109,9 +109,10 @@ require_literal "$workflow" "needs: [release-interface, publish-github-release]"
 require_literal "$workflow" "if: inputs.run-homebrew-proof && (needs.publish-github-release.result == 'success' || needs.publish-github-release.result == 'skipped')"
 require_literal "$workflow" "CALLER_HOMEBREW_GITHUB_API_TOKEN:"
 require_literal "$workflow" "HOMEBREW_GITHUB_API_TOKEN secret is required for e0da/internal Homebrew proof."
-require_literal "$workflow" "GIT_CONFIG_COUNT: \"1\""
-require_literal "$workflow" "GIT_CONFIG_KEY_0: \"url.https://x-access-token:\${{ secrets.HOMEBREW_GITHUB_API_TOKEN || github.token }}@github.com/.insteadOf\""
-require_literal "$workflow" "GIT_CONFIG_VALUE_0: \"https://github.com/\""
+require_literal "$workflow" "HOMEBREW_GITHUB_API_TOKEN: \${{ inputs.homebrew-tap == 'e0da/internal' && secrets.HOMEBREW_GITHUB_API_TOKEN || '' }}"
+require_literal "$workflow" "GIT_CONFIG_COUNT: \${{ inputs.homebrew-tap == 'e0da/internal' && '1' || '0' }}"
+require_literal "$workflow" "GIT_CONFIG_KEY_0: \${{ inputs.homebrew-tap == 'e0da/internal' && format('url.https://x-access-token:{0}@github.com/.insteadOf', secrets.HOMEBREW_GITHUB_API_TOKEN) || '' }}"
+require_literal "$workflow" "GIT_CONFIG_VALUE_0: \${{ inputs.homebrew-tap == 'e0da/internal' && 'https://github.com/' || '' }}"
 require_literal "$workflow" "brew tap \"\$HOMEBREW_TAP\""
 require_literal "$workflow" "brew fetch --force \"\$HOMEBREW_TAP/\$HOMEBREW_FORMULA\""
 require_literal "$workflow" "brew install \"\$HOMEBREW_TAP/\$HOMEBREW_FORMULA\""
@@ -137,31 +138,57 @@ cat > "$fixture_dir/bin/brew" <<'EOF'
 #!/bin/sh
 set -eu
 
-[ "${GIT_CONFIG_COUNT:-}" = "1" ] || exit 81
-[ "${GIT_CONFIG_VALUE_0:-}" = "https://github.com/" ] || exit 82
-[ "$(git config --get user.name)" = "Existing Runner User" ] || exit 83
-[ "$(git config --get "$GIT_CONFIG_KEY_0")" = "https://github.com/" ] || exit 84
+case "$MOCK_AUTH_MODE" in
+  private)
+    [ "$HOMEBREW_GITHUB_API_TOKEN" = "fixture-token" ] || exit 80
+    [ "${GIT_CONFIG_COUNT:-}" = "1" ] || exit 81
+    [ "${GIT_CONFIG_VALUE_0:-}" = "https://github.com/" ] || exit 82
+    [ "$(git config --get user.name)" = "Existing Runner User" ] || exit 83
+    [ "$(git config --get "$GIT_CONFIG_KEY_0")" = "https://github.com/" ] || exit 84
+    ;;
+  public)
+    [ -z "${HOMEBREW_GITHUB_API_TOKEN:-}" ] || exit 85
+    [ "${GIT_CONFIG_COUNT:-}" = "0" ] || exit 86
+    [ -z "${GIT_CONFIG_KEY_0:-}" ] || exit 87
+    [ -z "${GIT_CONFIG_VALUE_0:-}" ] || exit 89
+    ;;
+  *) exit 88 ;;
+esac
 exit "${MOCK_BREW_EXIT:-0}"
 EOF
 chmod +x "$fixture_dir/bin/brew"
 
-run_scoped_brew() {
+run_private_brew() {
   mock_exit="$1"
   HOME="$fixture_dir/home" \
     PATH="$fixture_dir/bin:$PATH" \
     MOCK_BREW_EXIT="$mock_exit" \
+    MOCK_AUTH_MODE=private \
+    HOMEBREW_GITHUB_API_TOKEN=fixture-token \
     GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0="url.https://x-access-token:fixture-token@github.com/.insteadOf" \
     GIT_CONFIG_VALUE_0="https://github.com/" \
     brew tap e0da/internal
 }
 
-run_scoped_brew 0 || fail "process-scoped Git auth should reach a successful Homebrew command"
+run_public_brew() {
+  HOME="$fixture_dir/home" \
+    PATH="$fixture_dir/bin:$PATH" \
+    MOCK_AUTH_MODE=public \
+    HOMEBREW_GITHUB_API_TOKEN='' \
+    GIT_CONFIG_COUNT=0 \
+    GIT_CONFIG_KEY_0='' \
+    GIT_CONFIG_VALUE_0='' \
+    brew tap e0da/beta
+}
+
+run_public_brew || fail "public Homebrew command should run without injected credentials"
+run_private_brew 0 || fail "process-scoped Git auth should reach a successful private Homebrew command"
 cmp -s "$fixture_dir/gitconfig.before" "$fixture_dir/home/.gitconfig" ||
   fail "successful Homebrew command changed preexisting global Git config"
 
 failure_exit=0
-run_scoped_brew 23 || failure_exit=$?
+run_private_brew 23 || failure_exit=$?
 [ "$failure_exit" -eq 23 ] || fail "fixture Homebrew failure should propagate unchanged"
 cmp -s "$fixture_dir/gitconfig.before" "$fixture_dir/home/.gitconfig" ||
   fail "failed Homebrew command changed preexisting global Git config"
