@@ -1,0 +1,20 @@
+name: PR Quality
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  pr-quality:
+    name: PR Quality
+    uses: ./.github/workflows/pr-quality.yml
+    with:
+      runner: actions-linux-arm64
+      projection-label: approved[pr-reviewer]
