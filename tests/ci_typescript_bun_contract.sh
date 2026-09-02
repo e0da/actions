@@ -84,9 +84,18 @@ mkdir -p "$mock_bin"
 
 cat >"$mock_bin/apt-get" <<'SH'
 #!/bin/sh
-exit 0
+set -eu
+printf '%s\n' "$*" >>"$APT_CALLS"
 SH
 chmod +x "$mock_bin/apt-get"
+
+cat >"$mock_bin/id" <<'SH'
+#!/bin/sh
+set -eu
+[ "${1-}" = "-u" ] || exit 2
+printf '%s\n' "$ID_UID"
+SH
+chmod +x "$mock_bin/id"
 
 cat >"$mock_bin/sudo" <<'SH'
 #!/bin/sh
@@ -99,6 +108,8 @@ system_deps_step="$tmpdir/system-deps-step.sh"
 extract_run_step "Install system dependencies" "$system_deps_step"
 
 SUDO_CALLS="$tmpdir/empty-system-deps.calls" \
+  APT_CALLS="$tmpdir/empty-system-deps.apt-calls" \
+  ID_UID=1000 \
   SYSTEM_DEPS='' \
   PATH="$mock_bin:$PATH" \
   bash "$system_deps_step"
@@ -106,6 +117,8 @@ SUDO_CALLS="$tmpdir/empty-system-deps.calls" \
   fail "empty system-deps must not invoke apt"
 
 SUDO_CALLS="$tmpdir/redis-system-deps.calls" \
+  APT_CALLS="$tmpdir/redis-system-deps.apt-calls" \
+  ID_UID=1000 \
   SYSTEM_DEPS='redis-server ca-certificates' \
   PATH="$mock_bin:$PATH" \
   bash "$system_deps_step"
@@ -114,7 +127,22 @@ grep -Fx "apt-get update -q" "$tmpdir/redis-system-deps.calls" >/dev/null ||
 grep -Fx "apt-get install -y --no-install-recommends -- redis-server ca-certificates" "$tmpdir/redis-system-deps.calls" >/dev/null ||
   fail "system-deps were not forwarded as validated package arguments"
 
+SUDO_CALLS="$tmpdir/root-system-deps.sudo-calls" \
+  APT_CALLS="$tmpdir/root-system-deps.apt-calls" \
+  ID_UID=0 \
+  SYSTEM_DEPS='redis-server' \
+  PATH="$mock_bin:$PATH" \
+  bash "$system_deps_step"
+[ ! -e "$tmpdir/root-system-deps.sudo-calls" ] ||
+  fail "root runners must not require sudo"
+grep -Fx "update -q" "$tmpdir/root-system-deps.apt-calls" >/dev/null ||
+  fail "root runner did not update apt metadata directly"
+grep -Fx "install -y --no-install-recommends -- redis-server" "$tmpdir/root-system-deps.apt-calls" >/dev/null ||
+  fail "root runner did not install system-deps directly"
+
 if SUDO_CALLS="$tmpdir/invalid-system-deps.calls" \
+  APT_CALLS="$tmpdir/invalid-system-deps.apt-calls" \
+  ID_UID=1000 \
   SYSTEM_DEPS='redis-server;touch-pwned' \
   PATH="$mock_bin:$PATH" \
   bash "$system_deps_step"; then
