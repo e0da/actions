@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: latest
+      system-deps:
+        description: "Optional space-delimited Debian package names installed before dependencies and checks."
+        required: false
+        type: string
+        default: ""
       env:
         description: "Optional newline-delimited KEY=VALUE entries exported before commands run."
         required: false
@@ -54,6 +59,40 @@ jobs:
     runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        if: ${{ inputs.system-deps != '' }}
+        env:
+          SYSTEM_DEPS: ${{ inputs.system-deps }}
+        run: |
+          if [[ -z "$SYSTEM_DEPS" ]]; then
+            exit 0
+          fi
+
+          read -r -a packages <<< "$SYSTEM_DEPS"
+          for package in "${packages[@]}"; do
+            if [[ ! "$package" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]; then
+              echo "invalid Debian package name: $package" >&2
+              exit 1
+            fi
+          done
+
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "system-deps requires a Debian or Ubuntu runner with apt-get" >&2
+            exit 1
+          fi
+
+          apt=(apt-get)
+          if [[ "$(id -u)" -ne 0 ]]; then
+            if ! command -v sudo >/dev/null 2>&1; then
+              echo "system-deps requires root or passwordless sudo" >&2
+              exit 1
+            fi
+            apt=(sudo apt-get)
+          fi
+
+          "${apt[@]}" update -q
+          "${apt[@]}" install -y --no-install-recommends -- "${packages[@]}"
 
       - uses: oven-sh/setup-bun@v2
         with:
