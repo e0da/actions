@@ -45,6 +45,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
 
       - name: Install shell test tools
         shell: sh
@@ -79,6 +80,8 @@ jobs:
           sh tests/runner_manifest_validation.sh
           sh tests/rust_workflows_arc_ready.sh
           sh tests/release_elixir.sh
+          sh tests/release_gist_contract.sh
+          sh tests/release_gist_exact_set.sh
           sh tests/release_homebrew_interface.sh
           sh tests/unity_ci_contract.sh
           sh tests/wiki_bundled_ci_contract.sh
