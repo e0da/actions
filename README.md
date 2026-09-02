@@ -73,11 +73,16 @@ when present, and then runs `bun test`:
 The test step always runs; callers can replace it with `test-command`. Callers
 can also override the format, lint, build, and check commands, request
 `chromium`, `firefox`, or `webkit` with `playwright-browser`, and pass
-newline-delimited non-secret CI environment entries through `env`.
+newline-delimited non-secret CI environment entries through `env`. Debian and
+Ubuntu callers can provide space-delimited package names through `system-deps`;
+the workflow validates every name and installs the packages before Bun
+dependencies and checks. For example, `system-deps: redis-server` makes Redis
+available to integration tests.
 
 The workflow reads package metadata through Bun. It does not scan repository
-files, install ripgrep, or install OS packages. The requested Playwright browser
-payload installs after the caller's frozen dependency install.
+files or install ripgrep. `system-deps` requires `apt-get`; requesting it on a
+non-Debian runner fails explicitly. The requested Playwright browser payload
+installs after the caller's frozen dependency install.
 
 ### `ci-node-npm.yml` — Node repos with a `package-lock.json`
 
