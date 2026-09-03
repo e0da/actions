@@ -1,0 +1,492 @@
+#!/bin/sh
+set -eu
+
+export NO_COLOR=1
+export CLICOLOR=0
+export CLICOLOR_FORCE=0
+
+usage() {
+  cat <<'EOF'
+Usage: pr-quality-review --reviewer ID --session ID --review-file PATH --evidence-file PATH [options]
+
+Options:
+  --repo OWNER/REPO     GitHub repository; defaults to the current repository
+  --pr NUMBER           Pull request; defaults to the current branch's PR
+  --tool NAME           Reviewing tool; defaults to codex
+  --findings-file PATH  Resolved findings JSON array; defaults to []
+  -h, --help            Show this help
+EOF
+}
+
+fail() {
+  echo "pr-quality-review: $1" >&2
+  exit 1
+}
+
+reviewer_id=""
+session_id=""
+review_file=""
+evidence_file=""
+findings_file=""
+repository="${GITHUB_REPOSITORY:-}"
+pr_number="${PULL_REQUEST_NUMBER:-}"
+tool_name=codex
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --reviewer)
+      [ "$#" -ge 2 ] || fail "--reviewer requires a value"
+      reviewer_id="$2"
+      shift 2
+      ;;
+    --session)
+      [ "$#" -ge 2 ] || fail "--session requires a value"
+      session_id="$2"
+      shift 2
+      ;;
+    --review-file)
+      [ "$#" -ge 2 ] || fail "--review-file requires a value"
+      review_file="$2"
+      shift 2
+      ;;
+    --evidence-file)
+      [ "$#" -ge 2 ] || fail "--evidence-file requires a value"
+      evidence_file="$2"
+      shift 2
+      ;;
+    --findings-file)
+      [ "$#" -ge 2 ] || fail "--findings-file requires a value"
+      findings_file="$2"
+      shift 2
+      ;;
+    --repo)
+      [ "$#" -ge 2 ] || fail "--repo requires a value"
+      repository="$2"
+      shift 2
+      ;;
+    --pr)
+      [ "$#" -ge 2 ] || fail "--pr requires a value"
+      pr_number="$2"
+      shift 2
+      ;;
+    --tool)
+      [ "$#" -ge 2 ] || fail "--tool requires a value"
+      tool_name="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1"
+      ;;
+  esac
+done
+
+for command_name in gh jq; do
+  command -v "$command_name" >/dev/null 2>&1 || fail "required command is unavailable: $command_name"
+done
+
+[ -n "$reviewer_id" ] || fail "--reviewer is required"
+[ -n "$session_id" ] || fail "--session is required"
+[ -n "$review_file" ] || fail "--review-file is required"
+[ -f "$review_file" ] || fail "review file does not exist: $review_file"
+[ -n "$evidence_file" ] || fail "--evidence-file is required"
+[ -f "$evidence_file" ] || fail "evidence file does not exist: $evidence_file"
+[ -n "$tool_name" ] || fail "--tool must not be empty"
+
+if [ -z "$repository" ]; then
+  repository="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+fi
+if [ -z "$pr_number" ]; then
+  pr_number="$(gh pr view --json number --jq .number)"
+fi
+printf '%s\n' "$repository" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
+  fail "repository must use OWNER/REPO syntax"
+printf '%s\n' "$pr_number" | grep -Eq '^[0-9]+$' || fail "pull request number is invalid"
+
+temp_root="${TMPDIR:-/tmp}"
+workdir="$(mktemp -d "${temp_root%/}/pr-quality-review.XXXXXX")"
+trap 'rm -rf "$workdir"' EXIT INT TERM
+pr_json="$workdir/pr.json"
+pr_body_raw="$workdir/pr-body-raw.md"
+pr_body="$workdir/pr-body.md"
+review_visible="$workdir/review-visible.md"
+receipt_json="$workdir/receipt.json"
+published_review="$workdir/published-review.md"
+
+gh api "repos/${repository}/pulls/${pr_number}" > "$pr_json"
+pr_title="$(jq -r '.title // ""' "$pr_json")"
+head_sha="$(jq -r '.head.sha // ""' "$pr_json")"
+pr_author="$(jq -r '.user.login // ""' "$pr_json")"
+github_login="$(gh api user --jq .login)"
+jq -r '.body // ""' "$pr_json" > "$pr_body_raw"
+
+[ -n "$pr_title" ] || fail "PR title is missing"
+printf '%s\n' "$head_sha" | grep -Eq '^[0-9a-f]{40}$' || fail "PR head is missing or malformed"
+[ -n "$pr_author" ] || fail "PR publisher identity is missing"
+[ -n "$github_login" ] || fail "authenticated GitHub identity is missing"
+grep -Fx '<!-- e0da-pr-body:v1 -->' "$pr_body_raw" >/dev/null ||
+  fail "PR body is missing <!-- e0da-pr-body:v1 -->"
+if grep -F 'PR_BODY_REQUIRED:' "$pr_body_raw" |
+  grep -Fv 'PR_BODY_REQUIRED:ADVERSARIAL_REVIEW' >/dev/null; then
+  fail "replace every non-review PR_BODY_REQUIRED:<SECTION> placeholder"
+fi
+
+visible_markdown() {
+  awk '
+    function leading_run(text, character, count) {
+      count=0
+      while (substr(text, count + 1, 1) == character) { count++ }
+      return count
+    }
+    {
+      raw=$0
+      if (fence_length > 0) {
+        indentation=0
+        while (indentation < 4 && substr(raw, indentation + 1, 1) == " ") {
+          indentation++
+        }
+        fence_eligible=(indentation <= 3)
+        control=substr(raw, indentation + 1)
+        if (fence_eligible) {
+          run_length=leading_run(control, fence_character)
+          remainder=substr(control, run_length + 1)
+          if (run_length >= fence_length && remainder ~ /^[[:space:]]*$/) {
+            fence_character=""
+            fence_length=0
+          }
+        }
+        print ""
+        next
+      }
+      line=raw
+      visible=""
+      while (1) {
+        if (comment) {
+          ending=index(line, "-->")
+          if (!ending) {
+            line=""
+            break
+          }
+          line=substr(line, ending + 3)
+          comment=0
+        }
+        opening=index(line, "<!--")
+        if (!opening) {
+          visible=visible line
+          break
+        }
+        visible=visible substr(line, 1, opening - 1)
+        line=substr(line, opening + 4)
+        comment=1
+      }
+      indentation=0
+      while (indentation < 4 && substr(visible, indentation + 1, 1) == " ") {
+        indentation++
+      }
+      fence_eligible=(indentation <= 3)
+      control=substr(visible, indentation + 1)
+      opening_character=substr(control, 1, 1)
+      if (fence_eligible && (opening_character == "`" || opening_character == "~")) {
+        opening_length=leading_run(control, opening_character)
+        if (opening_length >= 3) {
+          fence_character=opening_character
+          fence_length=opening_length
+          print ""
+          next
+        }
+      }
+      print visible
+    }
+    END { exit(comment || fence_length > 0 ? 1 : 0) }
+  ' "$1" > "$2"
+}
+
+visible_markdown "$pr_body_raw" "$pr_body" ||
+  fail "PR body contains an unclosed HTML comment or code fence"
+visible_markdown "$review_file" "$review_visible" ||
+  fail "review file contains an unclosed HTML comment or code fence"
+
+has_nonempty_section() {
+  section_name="$1"
+  section_file="$2"
+  awk -v heading="## $section_name" '
+    $0 == heading { seen=1; active=1; next }
+    active && /^## / { active=0 }
+    active && /^[[:space:]]*<!--/ { comment=1 }
+    active && comment {
+      if ($0 ~ /-->/) { comment=0 }
+      next
+    }
+    active {
+      text=$0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
+      if (text != "") { content=1 }
+    }
+    END { exit(seen && content ? 0 : 1) }
+  ' "$section_file"
+}
+
+for section_name in Outcome Verification 'Risk and rollback' Linear 'Adversarial review'; do
+  heading_count="$(grep -Fxc "## $section_name" "$pr_body" || true)"
+  [ "$heading_count" -ne 0 ] || fail "PR body is missing required non-empty section: $section_name"
+  [ "$heading_count" -eq 1 ] || fail "PR body heading must appear exactly once: $section_name"
+  has_nonempty_section "$section_name" "$pr_body" ||
+    fail "PR body is missing required non-empty section: $section_name"
+done
+
+first_review_line="$(awk 'NF { print; exit }' "$review_visible")"
+[ "$first_review_line" = 'Recommendation: Approve' ] ||
+  fail "review is missing canonical Recommendation: Approve"
+[ "$(grep -Fxc 'Blockers:' "$review_visible" || true)" -eq 1 ] ||
+  fail "review file must contain exactly one Blockers: field"
+[ "$(grep -Fxc 'Nits:' "$review_visible" || true)" -eq 1 ] ||
+  fail "review file must contain exactly one Nits: field"
+blockers_value="$(
+  awk '
+    $0 == "Blockers:" { active=1; next }
+    active && $0 == "Nits:" { exit }
+    active {
+      text=$0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
+      if (text != "") { print text }
+    }
+  ' "$review_visible"
+)"
+[ "$blockers_value" = '- none' ] || fail "review Blockers: must normalize to - none"
+awk '
+  $0 == "Nits:" { active=1; next }
+  active && /^[[:space:]]*-[[:space:]]+[^[:space:]]/ { found=1 }
+  END { exit(found ? 0 : 1) }
+' "$review_visible" || fail "review Nits: must contain a non-empty list"
+awk '
+  {
+    text=$0
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
+    if (text == "") { next }
+    if (state == 0 && text == "Recommendation: Approve") { state=1; next }
+    if (state == 1 && text == "Blockers:") { state=2; next }
+    if (state == 2 && text == "- none") { state=3; next }
+    if (state == 3 && text == "Nits:") { state=4; next }
+    if (state >= 4 && text ~ /^-[[:space:]]+[^[:space:]]/) { state=5; next }
+    invalid=1
+  }
+  END { exit(!invalid && state == 5 ? 0 : 1) }
+' "$review_visible" || fail "review must use canonical \$rvw control order"
+
+jq -e '
+  type == "array" and
+  length > 0 and
+  all(.[];
+    type == "object" and
+    (.kind | type == "string" and length > 0) and
+    (.subject | type == "string" and length > 0) and
+    .result == "pass"
+  )
+' "$evidence_file" >/dev/null || fail "evidence file must contain passing structured evidence"
+
+if [ -n "$findings_file" ]; then
+  [ -f "$findings_file" ] || fail "findings file does not exist: $findings_file"
+else
+  findings_file="$workdir/findings.json"
+  printf '[]\n' > "$findings_file"
+fi
+jq -e '
+  type == "array" and
+  all(.[];
+    type == "object" and
+    (.id | type == "string" and length > 0) and
+    (.severity | type == "string" and length > 0) and
+    .status == "resolved" and
+    (.resolution | type == "string" and length > 0)
+  )
+' "$findings_file" >/dev/null || fail "findings file contains an unresolved or malformed finding"
+
+sha256_text() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{ print $1 }'
+  else
+    fail "no SHA-256 implementation is available"
+  fi
+}
+
+normalized_section() {
+  normalized_name="$1"
+  normalized_file="$2"
+  awk -v heading="## $normalized_name" '
+    $0 == heading { active=1; next }
+    active && /^## / { exit }
+    active { print }
+  ' "$normalized_file" |
+    jq -Rrs 'gsub("\\r\\n?"; "\\n") | gsub("^[ \\t\\n]+|[ \\t\\n]+$"; "")'
+}
+
+metadata_outcome="$(normalized_section Outcome "$pr_body")"
+metadata_verification="$(normalized_section Verification "$pr_body")"
+metadata_risk="$(normalized_section 'Risk and rollback' "$pr_body")"
+metadata_linear="$(normalized_section Linear "$pr_body")"
+metadata_material="$(
+  jq -cnS \
+    --arg title "$pr_title" \
+    --arg outcome "$metadata_outcome" \
+    --arg verification "$metadata_verification" \
+    --arg risk "$metadata_risk" \
+    --arg linear "$metadata_linear" \
+    '{
+      body_version: "e0da-pr-body:v1",
+      title: $title,
+      sections: {
+        "Outcome": $outcome,
+        "Verification": $verification,
+        "Risk and rollback": $risk,
+        "Linear": $linear,
+        "Adversarial review": "<native-review>"
+      }
+    }'
+)"
+pr_metadata_digest="sha256:$(printf '%s' "$metadata_material" | sha256_text)"
+
+rubric_material='{"checks":["correctness","verification","risk","scope"],"id":"e0da.adversarial-pr-review","version":"1"}'
+rubric_digest="sha256:$(printf '%s' "$rubric_material" | sha256_text)"
+evidence_material="$(jq -cS . "$evidence_file")"
+evidence_digest="sha256:$(printf '%s' "$evidence_material" | sha256_text)"
+findings_material="$(jq -c . "$findings_file")"
+
+if [ "$github_login" = "$pr_author" ]; then
+  review_event=COMMENT
+  assurance=reduced
+else
+  review_event=APPROVE
+  assurance=independent
+fi
+
+jq -cn \
+  --arg repository "$repository" \
+  --argjson pull_request "$pr_number" \
+  --arg head "$head_sha" \
+  --arg metadata_digest "$pr_metadata_digest" \
+  --arg reviewer_id "$reviewer_id" \
+  --arg github_login "$github_login" \
+  --arg session_id "$session_id" \
+  --arg tool "$tool_name" \
+  --arg rubric_digest "$rubric_digest" \
+  --arg assurance "$assurance" \
+  --argjson findings "$findings_material" \
+  --argjson evidence "$evidence_material" \
+  --arg evidence_digest "$evidence_digest" \
+  '{
+    schema: "e0da.adversarial-review-receipt/v1",
+    repository: $repository,
+    pull_request: $pull_request,
+    head_sha: $head,
+    pr_metadata_digest: $metadata_digest,
+    reviewer: {id: $reviewer_id, github_login: $github_login},
+    session: {id: $session_id, tool: $tool},
+    rubric: {
+      id: "e0da.adversarial-pr-review",
+      version: "1",
+      digest: $rubric_digest,
+      checks: ["correctness", "verification", "risk", "scope"]
+    },
+    verdict: "APPROVE",
+    assurance: $assurance,
+    findings: $findings,
+    evidence: $evidence,
+    evidence_digest: $evidence_digest
+  }' > "$receipt_json"
+
+{
+  awk '{ lines[NR]=$0 } END { last=NR; while (last > 0 && lines[last] == "") { last-- } for (i=1; i<=last; i++) print lines[i] }' "$review_file"
+  echo
+  echo '<!-- E0DA_ADVERSARIAL_REVIEW_RECEIPT_V1'
+  jq -c . "$receipt_json"
+  echo '-->'
+} > "$published_review"
+
+review_payload="$workdir/review-payload.json"
+jq -cn \
+  --arg body "$(cat "$published_review")" \
+  --arg commit_id "$head_sha" \
+  --arg event "$review_event" \
+  '{body: $body, commit_id: $commit_id, event: $event}' > "$review_payload"
+review_response="$workdir/review-response.json"
+review_stream="$workdir/review-stream.ndjson"
+reviews="$workdir/reviews.json"
+gh api "repos/${repository}/pulls/${pr_number}/reviews" \
+  --paginate \
+  --jq '.[]' > "$review_stream" ||
+  fail "could not fetch every native review page"
+jq -s '.' "$review_stream" > "$reviews" ||
+  fail "paginated native review response is malformed"
+jq -e 'type == "array" and all(.[]; type == "object")' "$reviews" >/dev/null ||
+  fail "paginated native review response is malformed"
+if [ "$review_event" = COMMENT ]; then
+  expected_review_state=COMMENTED
+else
+  expected_review_state=APPROVED
+fi
+published_review_body="$(cat "$published_review")"
+existing_review="$(
+  jq -c \
+    --arg body "$published_review_body" \
+    --arg head "$head_sha" \
+    --arg login "$github_login" \
+    --arg state "$expected_review_state" '
+      [
+        .[] |
+        select(
+          .body == $body and
+          .commit_id == $head and
+          .user.login == $login and
+          .state == $state
+        )
+      ] |
+      sort_by([.submitted_at // "", .id // 0]) |
+      last // empty
+    ' "$reviews"
+)"
+if [ -n "$existing_review" ]; then
+  printf '%s\n' "$existing_review" > "$review_response"
+else
+  gh api "repos/${repository}/pulls/${pr_number}/reviews" \
+    --method POST \
+    --input "$review_payload" > "$review_response"
+fi
+review_url="$(jq -r '.html_url // ""' "$review_response")"
+printf '%s\n' "$review_url" |
+  grep -Eq "^https://github.com/${repository}/pull/${pr_number}#pullrequestreview-[0-9]+$" ||
+  fail "GitHub did not return the expected native review URL"
+
+pr_live="$workdir/pr-live.json"
+gh api "repos/${repository}/pulls/${pr_number}" > "$pr_live"
+initial_pr_state="$(jq -cS '{head: .head.sha, title: .title, body: (.body // "")}' "$pr_json")"
+live_pr_state="$(jq -cS '{head: .head.sha, title: .title, body: (.body // "")}' "$pr_live")"
+[ "$live_pr_state" = "$initial_pr_state" ] ||
+  fail "PR head, title, or body changed before review-link update"
+
+patched_body="$workdir/patched-body.md"
+raw_review_heading_count="$(grep -Fxc '## Adversarial review' "$pr_body_raw" || true)"
+[ "$raw_review_heading_count" -eq 1 ] ||
+  fail "raw PR body must contain exactly one Adversarial review heading before update"
+awk -v review_url="$review_url" '
+  $0 == "## Adversarial review" {
+    print
+    print ""
+    print review_url
+    replacing=1
+    next
+  }
+  replacing && /^## / { replacing=0 }
+  !replacing { print }
+ ' "$pr_body_raw" > "$patched_body"
+patch_payload="$workdir/patch-payload.json"
+jq -cn --arg body "$(cat "$patched_body")" '{body: $body}' > "$patch_payload"
+gh api "repos/${repository}/pulls/${pr_number}" \
+  --method PATCH \
+  --input "$patch_payload" >/dev/null
+
+printf '%s\n' "$review_url"
