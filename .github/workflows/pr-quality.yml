@@ -250,8 +250,24 @@ jobs:
 
           [ "$native_review_url" = "$review_url" ] || fail "adversarial review link did not resolve to the requested native review"
           [ "$review_commit" = "$live_head" ] || fail "native review commit does not match live PR head"
-          review_text="$(awk 'NF { found=1 } END { print found ? "present" : "" }' "$review_body")"
-          [ -n "$review_text" ] || fail "native review body must contain substantive visible text"
+          require_review_section() {
+            section_name="$1"
+            awk -v heading="$section_name:" '
+              $0 == heading { found=1; active=1; next }
+              active && /^[[:alpha:]][[:alpha:] ]*:/ { exit }
+              active {
+                text=$0
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
+                if (text != "") { content=1 }
+              }
+              END { exit(found && content ? 0 : 1) }
+            ' "$review_body"
+          }
+          if ! grep -Eq '^Verdict:[[:space:]]+[^[:space:]]' "$review_body" ||
+            ! require_review_section "Technical findings" ||
+            ! require_review_section "Verification"; then
+            fail "native review must include a verdict, technical findings, and verification"
+          fi
 
           case "$review_state" in
             APPROVED|COMMENTED)

@@ -21,7 +21,9 @@ for literal in \
   '          [ "$review_commit" = "$live_head" ] || fail "native review commit does not match live PR head"' \
   '            APPROVED|COMMENTED)' \
   '            fail "native review state $review_state is not acceptable"' \
-  '          [ -n "$review_text" ] || fail "native review body must contain substantive visible text"' \
+  '            ! require_review_section "Technical findings" ||' \
+  '            ! require_review_section "Verification"; then' \
+  '            fail "native review must include a verdict, technical findings, and verification"' \
   '              fail "a current-head review state is CHANGES_REQUESTED"'
 do
   grep -F "$literal" "$workflow" "$self_workflow" >/dev/null || {

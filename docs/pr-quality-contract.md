@@ -16,8 +16,8 @@ sections. The review section contains one native review link for the same PR.
 ## Review
 
 The linked native review must be `APPROVED` or `COMMENTED`, point at the current
-head, and contain substantive visible text. A normal technical review records
-its verdict, technical findings, and verification. The workflow rejects a
+head, and contain a non-empty `Verdict:` line plus non-empty `Technical
+findings:` and `Verification:` sections. The workflow rejects a
 current-head `CHANGES_REQUESTED` state and rechecks live review state before and
 after projecting its label.
 
