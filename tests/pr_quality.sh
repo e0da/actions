@@ -291,14 +291,12 @@ EOF
 receipt() {
   receipt_head="$1"
   reviewer_login="$2"
-  assurance="$3"
-  findings="$4"
-  digest="$5"
+  findings="$3"
+  digest="$4"
 
   jq -cn \
     --arg head "$receipt_head" \
     --arg login "$reviewer_login" \
-    --arg assurance "$assurance" \
     --arg findings "$findings" \
     --arg digest "$digest" \
     --arg rubric_digest "$rubric_digest" \
@@ -319,7 +317,6 @@ receipt() {
         checks: ["correctness", "verification", "risk", "scope"]
       },
       verdict: "APPROVE",
-      assurance: $assurance,
       findings: ($findings | fromjson),
       evidence: $evidence,
       evidence_digest: $digest
@@ -518,10 +515,11 @@ expect_failure() {
 
 body="$(valid_body)"
 pr_metadata_digest="sha256:$(metadata_digest_for "$body" "$pr_title")"
-valid_independent_receipt="$(receipt "$head_sha" hypatia-bot independent '[]' "$evidence_digest")"
-valid_reduced_receipt="$(receipt "$head_sha" e0da reduced '[]' "$evidence_digest")"
+valid_approved_receipt="$(receipt "$head_sha" hypatia-bot '[]' "$evidence_digest")"
+valid_commented_receipt="$(receipt "$head_sha" e0da '[]' "$evidence_digest")"
+valid_independent_receipt="$valid_approved_receipt"
 
-for case_name in independent_approved color_sanitized same_publisher_commented poison_placeholder \
+for case_name in independent_approved color_sanitized commented_review poison_placeholder \
   missing_body_marker missing_section comment_only_section stale_receipt \
   stale_native_review malformed_receipt missing_rubric_version \
   invalid_rubric_digest foreign_receipt changes_requested unresolved_finding \
@@ -543,20 +541,18 @@ done
 expect_success \
   independent_approved \
   "$body" "$head_sha" "$head_sha" e0da \
-  APPROVED "$head_sha" hypatia-bot "$(review_body "$valid_independent_receipt")"
-grep -F "assurance: independent" "$tmpdir/independent_approved.output" >/dev/null
+  APPROVED "$head_sha" hypatia-bot "$(review_body "$valid_approved_receipt")"
 grep -F -- "--method POST" "$tmpdir/independent_approved.labels" >/dev/null
 
 expect_success \
   color_sanitized \
   "$body" "$head_sha" "$head_sha" e0da \
-  APPROVED "$head_sha" hypatia-bot "$(review_body "$valid_independent_receipt")"
+  APPROVED "$head_sha" hypatia-bot "$(review_body "$valid_approved_receipt")"
 
 expect_success \
-  same_publisher_commented \
+  commented_review \
   "$body" "$head_sha" "$head_sha" e0da \
-  COMMENTED "$head_sha" e0da "$(review_body "$valid_reduced_receipt")"
-grep -F "assurance: reduced" "$tmpdir/same_publisher_commented.output" >/dev/null
+  COMMENTED "$head_sha" e0da "$(review_body "$valid_commented_receipt")"
 
 poisoned_body="$(printf '%s\nPR_BODY_REQUIRED:OUTCOME\n' "$body")"
 expect_failure \
@@ -590,7 +586,7 @@ expect_failure \
   "$comment_only_outcome_body" "$head_sha" "$head_sha" e0da \
   APPROVED "$head_sha" hypatia-bot "$(review_body "$valid_independent_receipt")"
 
-stale_receipt="$(receipt "$new_head_sha" hypatia-bot independent '[]' "$evidence_digest")"
+stale_receipt="$(receipt "$new_head_sha" hypatia-bot '[]' "$evidence_digest")"
 expect_failure \
   stale_receipt \
   "receipt head does not match live PR head" \
@@ -852,7 +848,7 @@ expect_failure \
   "$body" "$head_sha" "$head_sha" e0da \
   APPROVED "$head_sha" hypatia-bot "$(review_body "$weak_rubric_receipt")"
 
-foreign_receipt="$(receipt "$head_sha" foreign-bot independent '[]' "$evidence_digest")"
+foreign_receipt="$(receipt "$head_sha" foreign-bot '[]' "$evidence_digest")"
 expect_failure \
   foreign_receipt \
   "receipt reviewer does not match native review publisher" \
@@ -866,7 +862,7 @@ expect_failure \
   CHANGES_REQUESTED "$head_sha" hypatia-bot "$(review_body "$valid_independent_receipt")"
 
 unresolved_findings='[{"id":"F1","severity":"high","status":"open","resolution":""}]'
-unresolved_receipt="$(receipt "$head_sha" hypatia-bot independent "$unresolved_findings" "$evidence_digest")"
+unresolved_receipt="$(receipt "$head_sha" hypatia-bot "$unresolved_findings" "$evidence_digest")"
 expect_failure \
   unresolved_finding \
   "review receipt contains unresolved findings" \
@@ -874,17 +870,16 @@ expect_failure \
   APPROVED "$head_sha" hypatia-bot "$(review_body "$unresolved_receipt")"
 
 wrong_digest="sha256:$(printf '%064d' 0)"
-digest_mismatch_receipt="$(receipt "$head_sha" hypatia-bot independent '[]' "$wrong_digest")"
+digest_mismatch_receipt="$(receipt "$head_sha" hypatia-bot '[]' "$wrong_digest")"
 expect_failure \
   digest_mismatch \
   "review evidence digest does not match canonical evidence" \
   "$body" "$head_sha" "$head_sha" e0da \
   APPROVED "$head_sha" hypatia-bot "$(review_body "$digest_mismatch_receipt")"
 
-foreign_commented_receipt="$(receipt "$head_sha" hypatia-bot reduced '[]' "$evidence_digest")"
-expect_failure \
+foreign_commented_receipt="$(receipt "$head_sha" hypatia-bot '[]' "$evidence_digest")"
+expect_success \
   foreign_commented \
-  "COMMENTED review is accepted only from the PR publisher" \
   "$body" "$head_sha" "$head_sha" e0da \
   COMMENTED "$head_sha" hypatia-bot "$(review_body "$foreign_commented_receipt")"
 

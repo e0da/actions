@@ -97,7 +97,6 @@ Nits:
     "checks": ["correctness", "verification", "risk", "scope"]
   },
   "verdict": "APPROVE",
-  "assurance": "independent",
   "findings": [],
   "evidence": [
     {
@@ -225,12 +224,10 @@ Pass `--repo OWNER/REPO` and `--pr NUMBER` outside the PR checkout. `--tool`
 defaults to `codex`; `--findings-file` accepts a JSON array whose entries are
 already resolved. Run `--help` for the complete shape.
 
-The helper reads the authenticated GitHub login. It publishes `APPROVE` with
-independent assurance when that login differs from the PR publisher, or
-`COMMENT` with reduced assurance when they are the same. It refuses review
-Markdown that does not match canonical `$rvw` controls, non-passing evidence,
-unresolved findings, ambiguous body headings, and untouched non-review poison
-values before publishing.
+The helper publishes the native review and refuses review Markdown that does
+not match canonical `$rvw` controls, non-passing evidence, unresolved findings,
+ambiguous body headings, and untouched non-review poison values before
+publishing.
 
 ### Current review state
 
@@ -241,21 +238,9 @@ selects the latest decisive state by submission time and review ID. Decisive sta
 does not silently clear requested changes. Any latest `CHANGES_REQUESTED` state
 blocks the gate. A later `APPROVED` or `DISMISSED` state supersedes it.
 
-### Assurance modes
-
-An independent GitHub identity publishes an `APPROVED` review and declares
-`"assurance": "independent"`.
-
-When the authoring and reviewing agents share the PR publisher's GitHub
-identity, GitHub does not allow that identity to approve its own PR. A native
-`COMMENTED` review from the PR publisher may therefore declare
-`"assurance": "reduced"`. This path remains explicit in the check summary and
-does not pretend to be independent approval. A `COMMENTED` review from any
-other publisher fails.
-
-`CHANGES_REQUESTED`, reviewer identity mismatch, malformed receipt, stale
-head, post-review metadata edits, unresolved findings, failed evidence, or a
-digest mismatch fails the gate.
+`CHANGES_REQUESTED`, a malformed receipt, stale head, post-review metadata
+edits, unresolved findings, failed evidence, or a digest mismatch fails the
+gate.
 
 ## Projection label
 
@@ -348,8 +333,8 @@ repository and consumers therefore render the stable check
 `PR Quality / Adversarial Review` without causing broad self-CI to rerun on
 metadata-only edits.
 
-`tests/pr_quality.sh` provides offline contract fixtures for valid independent
-and reduced-assurance receipts plus poison, missing-section, comment-only,
+`tests/pr_quality.sh` provides offline contract fixtures for valid approving
+and commented receipts plus poison, missing-section, comment-only,
 hidden-comment, fenced-code, stale, malformed, foreign, changes-requested,
 unresolved, digest-mismatch, duplicate-receipt, metadata-tamper,
 repository/PR-binding, review-supersession, pagination, and head-race failures.

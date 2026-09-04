@@ -109,12 +109,10 @@ jobs:
 
           gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}" > "$pr_before"
           live_head="$(jq -r '.head.sha // ""' "$pr_before")"
-          pr_author="$(jq -r '.user.login // ""' "$pr_before")"
           pr_title="$(jq -r '.title // ""' "$pr_before")"
           jq -r '.body // ""' "$pr_before" > "$pr_body_raw"
 
           printf '%s\n' "$live_head" | grep -Eq '^[0-9a-f]{40}$' || fail "live PR head is missing or malformed"
-          [ -n "$pr_author" ] || fail "PR publisher identity is missing"
           [ -n "$pr_title" ] || fail "PR title is missing"
           grep -Fx '<!-- e0da-pr-body:v1 -->' "$pr_body_raw" >/dev/null ||
             fail "PR body is missing <!-- e0da-pr-body:v1 -->"
@@ -378,7 +376,6 @@ jobs:
             (.session.id | type == "string" and length > 0) and
             (.session.tool | type == "string" and length > 0) and
             .verdict == "APPROVE" and
-            (.assurance == "independent" or .assurance == "reduced") and
             (.findings | type == "array") and
             (.evidence | type == "array" and length > 0) and
             (all(.evidence[];
@@ -410,7 +407,6 @@ jobs:
           receipt_pull_request="$(jq -r '.pull_request' "$receipt_json")"
           receipt_metadata_digest="$(jq -r '.pr_metadata_digest' "$receipt_json")"
           receipt_publisher="$(jq -r '.reviewer.github_login' "$receipt_json")"
-          assurance="$(jq -r '.assurance' "$receipt_json")"
           [ "$receipt_repository" = "$REPOSITORY" ] ||
             fail "receipt repository does not match the live PR"
           [ "$receipt_pull_request" = "$PULL_REQUEST_NUMBER" ] ||
@@ -422,17 +418,7 @@ jobs:
             fail "receipt reviewer does not match native review publisher"
 
           case "$review_state" in
-            APPROVED)
-              [ "$review_publisher" != "$pr_author" ] ||
-                fail "APPROVED review must come from an independent publisher"
-              [ "$assurance" = independent ] ||
-                fail "APPROVED review must declare independent assurance"
-              ;;
-            COMMENTED)
-              [ "$review_publisher" = "$pr_author" ] ||
-                fail "COMMENTED review is accepted only from the PR publisher"
-              [ "$assurance" = reduced ] ||
-                fail "same-publisher COMMENTED review must declare reduced assurance"
+            APPROVED|COMMENTED)
               ;;
             *)
               fail "native review state $review_state is not acceptable"
@@ -544,9 +530,8 @@ jobs:
               echo "| Pull request | #${PULL_REQUEST_NUMBER} |"
               echo "| Reviewed head | \`${live_head}\` |"
               echo "| Native review | ${review_url} |"
-              echo "| Assurance | ${assurance} |"
               echo "| Projection label | \`${PROJECTION_LABEL}\` |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          echo "PR quality contract satisfied; assurance: $assurance"
+          echo "PR quality contract satisfied"

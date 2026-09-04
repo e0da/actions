@@ -186,15 +186,15 @@ run_helper() {
   ) > "$output_file" 2>&1
 }
 
-if ! run_helper reduced e0da "$tmpdir/review.md"; then
-  cat "$tmpdir/reduced.output" >&2
+if ! run_helper commented e0da "$tmpdir/review.md"; then
+  cat "$tmpdir/commented.output" >&2
   echo "helper failed to enumerate an empty paginated review list" >&2
   exit 1
 fi
-grep -Fx "$review_url" "$tmpdir/reduced.output" >/dev/null
+grep -Fx "$review_url" "$tmpdir/commented.output" >/dev/null
 jq -e '.event == "COMMENT" and .commit_id == "1111111111111111111111111111111111111111"' \
-  "$tmpdir/reduced.review-payload.json" >/dev/null
-jq -r '.body' "$tmpdir/reduced.review-payload.json" > "$tmpdir/published-review.md"
+  "$tmpdir/commented.review-payload.json" >/dev/null
+jq -r '.body' "$tmpdir/commented.review-payload.json" > "$tmpdir/published-review.md"
 grep -F '<!-- E0DA_ADVERSARIAL_REVIEW_RECEIPT_V1' "$tmpdir/published-review.md" >/dev/null
 awk '
   $0 == "<!-- E0DA_ADVERSARIAL_REVIEW_RECEIPT_V1" { active=1; next }
@@ -209,7 +209,6 @@ jq -e '
   .session.id == "session:pr-quality-helper-test" and
   .rubric.id == "e0da.adversarial-pr-review" and
   .rubric.version == "1" and
-  .assurance == "reduced" and
   .verdict == "APPROVE"
 ' "$tmpdir/receipt.json" >/dev/null
 
@@ -220,7 +219,7 @@ evidence_material="$(jq -cS '.evidence' "$tmpdir/receipt.json")"
 evidence_digest="sha256:$(printf '%s' "$evidence_material" | shasum -a 256 | awk '{ print $1 }')"
 [ "$(jq -r '.evidence_digest' "$tmpdir/receipt.json")" = "$evidence_digest" ]
 
-patched_body="$(jq -r '.body' "$tmpdir/reduced.patch-payload.json")"
+patched_body="$(jq -r '.body' "$tmpdir/commented.patch-payload.json")"
 printf '%s\n' "$patched_body" | grep -Fx '<!-- e0da-pr-body:v1 -->' >/dev/null
 printf '%s\n' "$patched_body" | grep -Fx "$review_url" >/dev/null
 if printf '%s\n' "$patched_body" | grep -F 'PR_BODY_REQUIRED:' >/dev/null; then
@@ -231,10 +230,8 @@ fi
 run_helper empty_review_list e0da "$tmpdir/review.md" "$tmpdir/pr.json" '[[], []]'
 grep -Fx POST "$tmpdir/empty_review_list.mutations" >/dev/null
 
-run_helper independent hypatia-bot "$tmpdir/review.md"
-jq -e '.event == "APPROVE"' "$tmpdir/independent.review-payload.json" >/dev/null
-jq -r '.body' "$tmpdir/independent.review-payload.json" |
-  grep -F '"assurance":"independent"' >/dev/null
+run_helper approved hypatia-bot "$tmpdir/review.md"
+jq -e '.event == "APPROVE"' "$tmpdir/approved.review-payload.json" >/dev/null
 
 if ! run_helper color_sanitized e0da "$tmpdir/review.md"; then
   cat "$tmpdir/color_sanitized.output" >&2
@@ -464,7 +461,7 @@ fi
 grep -F "review must use canonical \$rvw control order" \
   "$tmpdir/extra_review_prose.output" >/dev/null
 
-published_body="$(jq -r '.body' "$tmpdir/reduced.review-payload.json")"
+published_body="$(jq -r '.body' "$tmpdir/commented.review-payload.json")"
 existing_review_pages="$(jq -cn \
   --arg body "$published_body" \
   --arg head "$head_sha" \

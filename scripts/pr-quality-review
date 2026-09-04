@@ -358,10 +358,8 @@ findings_material="$(jq -c . "$findings_file")"
 
 if [ "$github_login" = "$pr_author" ]; then
   review_event=COMMENT
-  assurance=reduced
 else
   review_event=APPROVE
-  assurance=independent
 fi
 
 jq -cn \
@@ -374,7 +372,6 @@ jq -cn \
   --arg session_id "$session_id" \
   --arg tool "$tool_name" \
   --arg rubric_digest "$rubric_digest" \
-  --arg assurance "$assurance" \
   --argjson findings "$findings_material" \
   --argjson evidence "$evidence_material" \
   --arg evidence_digest "$evidence_digest" \
@@ -393,7 +390,6 @@ jq -cn \
       checks: ["correctness", "verification", "risk", "scope"]
     },
     verdict: "APPROVE",
-    assurance: $assurance,
     findings: $findings,
     evidence: $evidence,
     evidence_digest: $evidence_digest

@@ -72,11 +72,10 @@ so any job that reports success executed the gate against current GitHub state.
 Per-PR concurrency permits one running job and the newest pending job without
 canceling an allocated runner; GitHub may replace an older pending job.
 
-The gate supports independent native `APPROVED` reviews and an explicit
-reduced-assurance `COMMENTED` path when author and reviewer agents share the PR
-publisher's GitHub identity. Stale, malformed, foreign, changes-requested,
-unresolved, weak-rubric, or digest-mismatched receipts fail. A later comment
-does not silently clear a reviewer's requested changes.
+The gate accepts exact-head native `APPROVED` or `COMMENTED` technical reviews
+with a valid receipt. Stale, malformed, changes-requested, unresolved,
+weak-rubric, or digest-mismatched receipts fail. A later comment does not
+silently clear a reviewer's requested changes.
 
 On success the workflow adds its configured `approved[pr-reviewer]` label; on
 failure it removes only that exact label. The label is a readable projection,
