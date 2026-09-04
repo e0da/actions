@@ -15,7 +15,7 @@ concurrency:
 jobs:
   workflow-lint:
     name: Workflow Lint
-    runs-on: actions-linux-arm64
+    runs-on: e0da-puck-linux-arm64
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -41,7 +41,7 @@ jobs:
 
   script-fixtures:
     name: Script Fixtures
-    runs-on: actions-linux-arm64
+    runs-on: e0da-puck-linux-arm64
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5

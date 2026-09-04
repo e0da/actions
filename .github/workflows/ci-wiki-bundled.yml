@@ -179,9 +179,9 @@ jobs:
           esac
 
           case "$RUNNER_PROFILE" in
-            ""|hosted-linux|puck-linux-arm64|puck-macos-arm64) ;;
+            ""|hosted-linux|e0da-puck-linux-arm64|puck-macos-arm64) ;;
             *)
-              echo "::error::Unknown runner-profile '${RUNNER_PROFILE}'. Expected one of: hosted-linux, puck-linux-arm64, puck-macos-arm64."
+              echo "::error::Unknown runner-profile '${RUNNER_PROFILE}'. Expected one of: hosted-linux, e0da-puck-linux-arm64, puck-macos-arm64."
               exit 1
               ;;
           esac
@@ -203,7 +203,7 @@ jobs:
 
           case "$RUNNER_PROFILE" in
             hosted-linux) require_runner Linux ;;
-            puck-linux-arm64) require_runner Linux ARM64 ;;
+            e0da-puck-linux-arm64) require_runner Linux ARM64 ;;
             puck-macos-arm64) require_runner macOS ARM64 ;;
           esac
 
@@ -246,7 +246,7 @@ jobs:
               exit 1
             fi
 
-            if [ "$manifest_profile" = "puck-linux-arm64" ]; then
+            if [ "$manifest_profile" = "e0da-puck-linux-arm64" ]; then
               runner_local_bin_path="$(printf '%s' "$runner_entry" | jq -r '.path_policy.runner_local_bin.path // ""')"
               if [ "$runner_local_bin_path" != "/runner/.local/bin" ]; then
                 echo "::error::runner-manifest path_policy.runner_local_bin.path expected '/runner/.local/bin', got '${runner_local_bin_path:-<missing>}'."

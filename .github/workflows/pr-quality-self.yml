@@ -16,5 +16,5 @@ jobs:
     name: PR Quality
     uses: ./.github/workflows/pr-quality.yml
     with:
-      runner: actions-linux-arm64
+      runner: e0da-puck-linux-arm64
       projection-label: approved[pr-reviewer]

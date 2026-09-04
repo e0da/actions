@@ -25,7 +25,7 @@ on:
       linux-arm64-runner:
         required: false
         type: string
-        default: puck-linux-arm64
+        default: e0da-puck-linux-arm64
       publish-runner:
         required: false
         type: string

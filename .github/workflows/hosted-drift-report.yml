@@ -12,7 +12,7 @@ on:
         description: "Runner label for the report job."
         required: false
         type: string
-        default: puck-linux-arm64
+        default: e0da-puck-linux-arm64
       allowlist-path:
         description: "Caller-owned TSV file documenting approved hosted fallback."
         required: false
@@ -32,7 +32,7 @@ on:
         description: "Runner label for the report job."
         required: false
         type: string
-        default: puck-linux-arm64
+        default: e0da-puck-linux-arm64
       allowlist-path:
         description: "Caller-owned TSV file documenting approved hosted fallback."
         required: false

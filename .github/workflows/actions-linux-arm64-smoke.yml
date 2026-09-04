@@ -6,7 +6,7 @@ on:
 jobs:
   smoke:
     name: Actions Linux ARM64 ARC
-    runs-on: actions-linux-arm64
+    runs-on: e0da-puck-linux-arm64
     timeout-minutes: 10
     permissions:
       contents: read

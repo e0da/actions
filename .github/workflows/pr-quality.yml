@@ -7,7 +7,7 @@ on:
         description: "GitHub runner label for the PR quality gate."
         required: false
         type: string
-        default: puck-linux-arm64
+        default: e0da-puck-linux-arm64
       projection-label:
         description: "Exact approved[...] label projected from a valid current-head review."
         required: false

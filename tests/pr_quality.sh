@@ -24,7 +24,8 @@ for literal in \
   '            ! require_review_section "Technical findings" ||' \
   '            ! require_review_section "Verification"; then' \
   '            fail "native review must include a verdict, technical findings, and verification"' \
-  '              fail "a current-head review state is CHANGES_REQUESTED"'
+  '              fail "a current-head review state is CHANGES_REQUESTED"' \
+  '      runner: e0da-puck-linux-arm64'
 do
   grep -F "$literal" "$workflow" "$self_workflow" >/dev/null || {
     echo "PR quality contract is missing: $literal" >&2

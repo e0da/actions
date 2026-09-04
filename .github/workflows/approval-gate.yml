@@ -7,7 +7,7 @@ on:
         description: "GitHub runner label for the approval gate job."
         required: false
         type: string
-        default: puck-linux-arm64
+        default: e0da-puck-linux-arm64
       allowed-labels:
         description: "Comma- or newline-delimited exact approved[...] labels to report as merge approval signals."
         required: false
