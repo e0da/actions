@@ -62,20 +62,12 @@ jobs:
 
 ### `pr-quality.yml` — Exact-head PR quality gate
 
-Enforces the canonical versioned PR template, rejects section-specific
-`PR_BODY_REQUIRED:` poison placeholders, and verifies a structured adversarial
-review receipt embedded in a human-readable native GitHub review. The review
-object's commit, receipt repository/PR/head, reviewed PR metadata, and live PR
-state must agree. The human review uses the canonical `$rvw` recommendation,
-blockers, and nits format. No event conditionally skips the authoritative job,
-so any job that reports success executed the gate against current GitHub state.
-Per-PR concurrency permits one running job and the newest pending job without
-canceling an allocated runner; GitHub may replace an older pending job.
-
-The gate accepts exact-head native `APPROVED` or `COMMENTED` technical reviews
-with a valid receipt. Stale, malformed, changes-requested, unresolved,
-weak-rubric, or digest-mismatched receipts fail. A later comment does not
-silently clear a reviewer's requested changes.
+Enforces the versioned PR template, rejects section-specific
+`PR_BODY_REQUIRED:` placeholders, and verifies a substantive native technical
+review on the current PR head. The review may be `APPROVED` or `COMMENTED`.
+Current-head changes requested and stale review heads fail. No event
+conditionally skips the authoritative job, so a successful job evaluated the
+current GitHub state.
 
 On success the workflow adds its configured `approved[pr-reviewer]` label; on
 failure it removes only that exact label. The label is a readable projection,
@@ -86,13 +78,9 @@ compatibility semantics.
 Adopt this as a separate PR-metadata workflow so review and body edits rerun the
 quality gate without rerunning build CI. Copy
 [`templates/pull_request_template.md`](templates/pull_request_template.md) to
-the adopting repository's `.github/pull_request_template.md`. Use
-[`scripts/pr-quality-review`](scripts/pr-quality-review) to compute every
-digest, idempotently publish or reuse the exact native review, and place its
-link in the PR body. The selected runner must already provide verified `gh`,
-`jq`, and SHA-256 tooling; the gate downloads nothing. The full caller,
-receipt, label, and branch-protection contract is documented in
-[`docs/pr-quality-contract.md`](docs/pr-quality-contract.md).
+the adopting repository's `.github/pull_request_template.md`, then add the
+native technical-review link to the PR body. The full caller and label contract
+is documented in [`docs/pr-quality-contract.md`](docs/pr-quality-contract.md).
 
 An expected red `PR Quality / Adversarial Review` check before review means the
 PR is not review-ready; it is not a build failure. This new, separately named
