@@ -102,6 +102,16 @@ on:
         required: false
         type: string
         default: ""
+      release-notes-start-tag:
+        description: "Explicit source tag at which generated release notes begin; required when the SemVer baseline cannot be derived safely."
+        required: false
+        type: string
+        default: ""
+      release-access-scope:
+        description: "Human-readable distribution access scope recorded in the release provenance."
+        required: false
+        type: string
+        default: internal
       homebrew-formula-path:
         description: "Path (in release-repo) to the tap's Formula/<name>.rb; empty skips the automated url/version/sha256 bump. The file must already exist — this updates the release fields, it does not author a formula from scratch."
         required: false
@@ -118,7 +128,7 @@ jobs:
     name: Release Interface Proof
     runs-on: ${{ inputs.runner }}
     permissions:
-      contents: read
+      contents: write
     outputs:
       destination-tag: ${{ steps.release-tag.outputs.destination-tag }}
 
@@ -417,7 +427,84 @@ jobs:
             echo "checksum=$archive.sha256"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Upload release-interface artifact
+      - name: Generate source release notes
+        if: inputs.publish-github-release && github.ref_type == 'tag'
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES_START_TAG: ${{ inputs.release-notes-start-tag }}
+          RELEASE_ACCESS_SCOPE: ${{ inputs.release-access-scope }}
+        run: |
+          set -eu
+          source_version=${GITHUB_REF_NAME#v}
+          source_version=${source_version%%-*}
+          source_version=${source_version%%+*}
+          if ! printf '%s\n' "$source_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "release tag must begin with vMAJOR.MINOR.PATCH: $GITHUB_REF_NAME" >&2
+            exit 2
+          fi
+          IFS=. read -r major minor patch <<EOF
+          $source_version
+          EOF
+
+          previous_tag=$RELEASE_NOTES_START_TAG
+          if [ -z "$previous_tag" ]; then
+            if [ "$patch" -gt 0 ]; then
+              previous_tag="v$major.$minor.$((patch - 1))"
+            elif [ "$minor" -gt 0 ]; then
+              previous_tag="v$major.$((minor - 1)).0"
+            elif [ "$major" -gt 0 ]; then
+              previous_tag="v$((major - 1)).0.0"
+            fi
+          fi
+          if [ -n "$previous_tag" ] && ! git rev-parse --verify --quiet "refs/tags/$previous_tag" >/dev/null; then
+            echo "derived SemVer release-notes baseline is absent: $previous_tag; set release-notes-start-tag explicitly." >&2
+            exit 1
+          fi
+
+          if [ -n "$previous_tag" ]; then
+            generated=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f previous_tag_name="$previous_tag")
+          else
+            generated=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f target_commitish="$GITHUB_SHA")
+          fi
+          generated_body=$(printf '%s' "$generated" | jq -r '.body')
+          [ -n "$generated_body" ] && [ "$generated_body" != null ] || {
+            echo "GitHub generated an empty source release-note body" >&2
+            exit 1
+          }
+          {
+            echo "## Changes"
+            echo
+            printf '%s\n' "$generated_body"
+            echo
+            echo "## Upgrade scope"
+            if [ -n "$previous_tag" ]; then
+              echo "Compare: $previous_tag...$GITHUB_REF_NAME"
+            else
+              echo "Compare: initial release...$GITHUB_REF_NAME"
+            fi
+            echo
+            echo "## Provenance"
+            echo "Source: $GITHUB_REPOSITORY@$GITHUB_SHA"
+            echo "Source tag: $GITHUB_REF_NAME"
+            echo "Access scope: $RELEASE_ACCESS_SCOPE"
+          } > release-notes.md
+
+      - name: Validate composed source release notes
+        if: inputs.publish-github-release && github.ref_type == 'tag'
+        shell: sh
+        run: |
+          set -eu
+          test -s release-notes.md
+          grep -q '^## Changes$' release-notes.md
+          grep -q '^## Provenance$' release-notes.md
+
+      - name: Upload composed release notes and release-interface artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name }}
@@ -426,6 +513,7 @@ jobs:
             ${{ steps.package.outputs.checksum }}
             release-interface-metadata.json
             release-archive-metadata.json
+            release-notes.md
           if-no-files-found: error
 
   publish-github-release:
@@ -473,10 +561,16 @@ jobs:
             echo "release artifact checksum not found: $checksum" >&2
             exit 1
           }
+          [ -s release-notes.md ] || {
+            echo "composed source release notes not found" >&2
+            exit 1
+          }
 
           # release-asset-reconciliation:start
           # shellcheck shell=sh disable=SC2154
+          release_exists=false
           if gh release view "$DESTINATION_TAG" >/dev/null 2>&1; then
+            release_exists=true
             existing_release_dir=.existing-release-assets
             mkdir "$existing_release_dir"
             existing_asset_names=$(gh release view "$DESTINATION_TAG" --json assets --jq '.assets[].name')
@@ -492,36 +586,27 @@ jobs:
               fi
             done
             echo "release assets are complete and existing bytes remain immutable"
-            exit 0
           fi
           # release-asset-reconciliation:end
 
-          # `--generate-notes` summarizes GH_REPO's own commits. When
-          # release-repo differs from the source repo (e0da/actions#110),
-          # that's the tap's commits, not the artifact's — so cross-repo
-          # notes name the source explicitly instead (E0D-1613).
-          if [ "$GH_REPO" = "$GITHUB_REPOSITORY" ]; then
-            set -- --generate-notes
-          else
-            set -- --notes "Built from \`$GITHUB_REPOSITORY@$GITHUB_SHA\` at tag \`$GITHUB_REF_NAME\`."
-          fi
-          case "$GITHUB_REF_NAME" in
-            *-*) set -- "$@" --prerelease --latest=false ;;
-          esac
-          gh release create "$DESTINATION_TAG" "$archive" "$checksum" "$@"
-
-          # Detector: a cross-repo release whose notes don't name the source
-          # repo/commit should fail the job, not publish silently-wrong notes.
-          if [ "$GH_REPO" != "$GITHUB_REPOSITORY" ]; then
-            body=$(gh release view "$DESTINATION_TAG" --json body -q .body)
-            case "$body" in
-              *"$GITHUB_REPOSITORY@$GITHUB_SHA"*) ;;
-              *)
-                echo "published release notes do not name the source repo/commit ($GITHUB_REPOSITORY@$GITHUB_SHA)" >&2
-                exit 1
-                ;;
+          if [ "$release_exists" = false ]; then
+            case "$GITHUB_REF_NAME" in
+              *-*) prerelease_args="--prerelease --latest=false" ;;
+              *) prerelease_args="" ;;
             esac
+            # shellcheck disable=SC2086
+            gh release create "$DESTINATION_TAG" "$archive" "$checksum" \
+              --notes-file release-notes.md $prerelease_args
           fi
+
+          body=$(gh release view "$DESTINATION_TAG" --json body -q .body)
+          case "$body" in
+            *"$GITHUB_REPOSITORY@$GITHUB_SHA"*) ;;
+            *)
+              echo "published release notes do not name the source repo/commit ($GITHUB_REPOSITORY@$GITHUB_SHA)" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Bump Homebrew formula
         if: inputs.homebrew-formula-path != ''
