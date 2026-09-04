@@ -10,7 +10,7 @@ require_literal() {
   file="$1"
   literal="$2"
 
-  grep -F "$literal" "$file" >/dev/null || fail "$file missing literal: $literal"
+  grep -F -- "$literal" "$file" >/dev/null || fail "$file missing literal: $literal"
 }
 
 reject_literal() {
@@ -24,6 +24,25 @@ reject_literal() {
 
 workflow=".github/workflows/release-homebrew-interface.yml"
 [ -f "$workflow" ] || fail "$workflow is required"
+
+for release_document in \
+  docs/release/README.md \
+  docs/release/contract.md \
+  docs/release/semver-rollups.md \
+  docs/release/release-body.md \
+  docs/release/evidence.md \
+  docs/release/codenames.md \
+  docs/release/container-tags.md; do
+  [ -f "$release_document" ] || fail "$release_document is required"
+done
+require_literal "docs/release/README.md" "Canonical release-management contract"
+require_literal "docs/release/contract.md" "Actions does not choose a release version"
+require_literal "docs/release/semver-rollups.md" "chosen at release cut"
+require_literal "docs/release/semver-rollups.md" "git describe --tags --dirty --always"
+require_literal "docs/release/semver-rollups.md" "qualitative assessment"
+require_literal "docs/release/semver-rollups.md" "does not reopen version selection"
+require_literal "docs/release/container-tags.md" "tag@sha256:digest"
+require_literal "docs/release/container-tags.md" "Git release tags are immutable"
 
 require_literal "$workflow" "name: Release Homebrew Interface"
 require_literal "$workflow" "  workflow_call:"
@@ -45,6 +64,8 @@ require_literal "$workflow" "      run-homebrew-proof:"
 require_literal "$workflow" "      installed-smoke-command:"
 require_literal "$workflow" "      release-repo:"
 require_literal "$workflow" "      release-tag-prefix:"
+require_literal "$workflow" "      release-notes-start-tag:"
+require_literal "$workflow" "      release-access-scope:"
 require_literal "$workflow" "      homebrew-formula-path:"
 require_literal "$workflow" "      RELEASE_REPO_TOKEN:"
 require_literal "$workflow" "sh \"\$RELEASE_INTERFACE\" metadata"
@@ -76,8 +97,14 @@ require_literal "$workflow" "if: inputs.release-repo != '' && inputs.release-rep
 require_literal "$workflow" "RELEASE_REPO_TOKEN secret is required when release-repo differs from the calling repo."
 require_literal "$workflow" "GH_TOKEN: \${{ (inputs.release-repo != '' && inputs.release-repo != github.repository) && secrets.RELEASE_REPO_TOKEN || github.token }}"
 require_literal "$workflow" "GH_REPO: \${{ inputs.release-repo != '' && inputs.release-repo || github.repository }}"
-require_literal "$workflow" "if [ \"\$GH_REPO\" = \"\$GITHUB_REPOSITORY\" ]; then"
-require_literal "$workflow" "set -- --notes \"Built from \\\`\$GITHUB_REPOSITORY@\$GITHUB_SHA\\\` at tag \\\`\$GITHUB_REF_NAME\\\`.\""
+require_literal "$workflow" "Generate source release notes"
+require_literal "$workflow" "repos/\$GITHUB_REPOSITORY/releases/generate-notes"
+require_literal "$workflow" "RELEASE_NOTES_START_TAG"
+require_literal "$workflow" "derived SemVer release-notes baseline is absent"
+require_literal "$workflow" "Upload composed release notes"
+require_literal "$workflow" "release-notes.md"
+require_literal "$workflow" "--notes-file release-notes.md"
+require_literal "$workflow" "Access scope: \$RELEASE_ACCESS_SCOPE"
 require_literal "$workflow" "gh release create \"\$DESTINATION_TAG\""
 require_literal "$workflow" "gh release download \"\$DESTINATION_TAG\""
 require_literal "$workflow" "gh release upload \"\$DESTINATION_TAG\" \"\$asset\""
@@ -87,7 +114,6 @@ require_literal "$workflow" "release asset differs from the existing immutable a
 if grep -F -- '--clobber' "$workflow" >/dev/null; then
   fail "existing release assets must never be overwritten"
 fi
-require_literal "$workflow" "if [ \"\$GH_REPO\" != \"\$GITHUB_REPOSITORY\" ]; then"
 require_literal "$workflow" "body=\$(gh release view \"\$DESTINATION_TAG\" --json body -q .body)"
 require_literal "$workflow" "published release notes do not name the source repo/commit"
 require_literal "$workflow" "if: inputs.homebrew-formula-path != ''"

@@ -1,5 +1,7 @@
 # shellcheck shell=sh disable=SC2154
+release_exists=false
 if gh release view "$DESTINATION_TAG" >/dev/null 2>&1; then
+  release_exists=true
   existing_release_dir=.existing-release-assets
   mkdir "$existing_release_dir"
   existing_asset_names=$(gh release view "$DESTINATION_TAG" --json assets --jq '.assets[].name')
@@ -15,5 +17,4 @@ if gh release view "$DESTINATION_TAG" >/dev/null 2>&1; then
     fi
   done
   echo "release assets are complete and existing bytes remain immutable"
-  exit 0
 fi
