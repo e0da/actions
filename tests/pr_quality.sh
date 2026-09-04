@@ -27,6 +27,11 @@ if [ ! -f "$contract_doc" ]; then
   exit 1
 fi
 
+grep -F 'After repairing a failed prerequisite, classify the newly triggered gate run; an earlier failure is not the current result.' "$contract_doc" >/dev/null || {
+  echo "PR quality contract must require a fresh gate result after prerequisite repair" >&2
+  exit 1
+}
+
 for heading in \
   "## Outcome" \
   "## Verification" \
@@ -530,7 +535,7 @@ for case_name in independent_approved color_sanitized commented_review poison_pl
   duplicate_body_heading recommendation_mismatch \
   hidden_pr_body hidden_review unresolved_human_blocker multipage_reviews empty_review_list \
   fenced_pr_body fenced_review \
-  post_label_head_race post_label_changes_requested noncanonical_review_order \
+  post_label_head_race post_label_changes_requested flexible_review_layout \
   extra_review_prose long_backtick_fence long_tilde_fence longer_fence_closer \
   indented_backtick_closer indented_tilde_closer \
   comment_prefixed_backtick_closer comment_prefixed_indented_tilde_closer
@@ -810,18 +815,16 @@ Blockers:
 <!-- E0DA_ADVERSARIAL_REVIEW_RECEIPT_V1
 $valid_independent_receipt
 -->"
-expect_failure \
-  noncanonical_review_order \
-  "native review must use canonical \$rvw control order" \
+expect_success \
+  flexible_review_layout \
   "$body" "$head_sha" "$head_sha" e0da \
   APPROVED "$head_sha" hypatia-bot "$wrong_order_review"
 
 extra_prose_review="$(review_body "$valid_independent_receipt")
 
 Review narrative that is outside the canonical control surface."
-expect_failure \
+expect_success \
   extra_review_prose \
-  "native review must use canonical \$rvw control order" \
   "$body" "$head_sha" "$head_sha" e0da \
   APPROVED "$head_sha" hypatia-bot "$extra_prose_review"
 

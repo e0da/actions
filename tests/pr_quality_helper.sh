@@ -39,6 +39,14 @@ Blockers:
 
 Nits:
 - none
+
+Reviewed head: `1111111111111111111111111111111111111111`
+
+Technical findings:
+- none
+
+Verification:
+- sh tests/pr_quality.sh
 EOF
 
 cat > "$tmpdir/evidence.json" <<'EOF'
@@ -443,23 +451,15 @@ Nits:
 Blockers:
 - none
 EOF
-if run_helper wrong_order e0da "$tmpdir/wrong-order-review.md"; then
-  echo "helper accepted noncanonical review control order" >&2
-  exit 1
-fi
-grep -F "review must use canonical \$rvw control order" \
-  "$tmpdir/wrong_order.output" >/dev/null
+run_helper flexible_layout e0da "$tmpdir/wrong-order-review.md"
+jq -e '.event == "COMMENT"' "$tmpdir/flexible_layout.review-payload.json" >/dev/null
 
 {
   cat "$tmpdir/review.md"
   printf '\nReview narrative outside the canonical control surface.\n'
 } > "$tmpdir/extra-review-prose.md"
-if run_helper extra_review_prose e0da "$tmpdir/extra-review-prose.md"; then
-  echo "helper accepted extra visible review prose" >&2
-  exit 1
-fi
-grep -F "review must use canonical \$rvw control order" \
-  "$tmpdir/extra_review_prose.output" >/dev/null
+run_helper technical_review e0da "$tmpdir/extra-review-prose.md"
+jq -e '.event == "COMMENT"' "$tmpdir/technical_review.review-payload.json" >/dev/null
 
 published_body="$(jq -r '.body' "$tmpdir/commented.review-payload.json")"
 existing_review_pages="$(jq -cn \

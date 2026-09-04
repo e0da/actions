@@ -60,11 +60,11 @@ does not satisfy this reference.
 
 ## Native review receipt
 
-The linked native review remains human-first Markdown in the canonical `$rvw`
-shape. Its first visible nonblank line must be `Recommendation: Approve`, its
-`Blockers:` list must normalize exactly to `- none`, and its `Nits:` list must
-contain at least one item. No other visible prose is accepted. Embed exactly
-one machine receipt block anywhere in that review:
+The linked native review remains human-first Markdown. Its first visible
+nonblank line must be `Recommendation: Approve`, its `Blockers:` list must
+normalize exactly to `- none`, and its `Nits:` list must contain at least one
+item. Technical findings and verification may follow those controls. Embed
+exactly one machine receipt block anywhere in that review:
 
 ````markdown
 Recommendation: Approve
@@ -224,8 +224,8 @@ Pass `--repo OWNER/REPO` and `--pr NUMBER` outside the PR checkout. `--tool`
 defaults to `codex`; `--findings-file` accepts a JSON array whose entries are
 already resolved. Run `--help` for the complete shape.
 
-The helper publishes the native review and refuses review Markdown that does
-not match canonical `$rvw` controls, non-passing evidence, unresolved findings,
+The helper publishes the native review and refuses review Markdown that omits
+the required review fields, non-passing evidence, unresolved findings,
 ambiguous body headings, and untouched non-review poison values before
 publishing.
 
@@ -265,6 +265,8 @@ metadata and decisive review state after writing the label; later events
 recompute the projection again. GitHub does not offer an atomic transaction
 across independent API reads and label mutation, so the label remains an
 eventually consistent projection rather than authority.
+
+After repairing a failed prerequisite, classify the newly triggered gate run; an earlier failure is not the current result.
 
 The workflow expects its projection label to exist. This keeps repository label
 creation deliberate and makes a misspelled label a visible configuration error.

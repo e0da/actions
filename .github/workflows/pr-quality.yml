@@ -329,21 +329,6 @@ jobs:
             active && /^[[:space:]]*-[[:space:]]+[^[:space:]]/ { found=1 }
             END { exit(found ? 0 : 1) }
           ' "$review_body" || fail "native review Nits: must contain a non-empty list"
-          awk '
-            {
-              text=$0
-              gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
-              if (text == "") { next }
-              if (state == 0 && text == "Recommendation: Approve") { state=1; next }
-              if (state == 1 && text == "Blockers:") { state=2; next }
-              if (state == 2 && text == "- none") { state=3; next }
-              if (state == 3 && text == "Nits:") { state=4; next }
-              if (state >= 4 && text ~ /^-[[:space:]]+[^[:space:]]/) { state=5; next }
-              invalid=1
-            }
-            END { exit(!invalid && state == 5 ? 0 : 1) }
-          ' "$review_body" || fail "native review must use canonical \$rvw control order"
-
           if ! awk '
             $0 == "<!-- E0DA_ADVERSARIAL_REVIEW_RECEIPT_V1" {
               blocks++
