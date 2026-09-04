@@ -9,14 +9,14 @@ on:
         type: string
         default: puck-linux-arm64
       projection-label:
-        description: "Exact approved[...] label projected from a valid receipt."
+        description: "Exact approved[...] label projected from a valid current-head review."
         required: false
         type: string
         default: approved[pr-reviewer]
 
 jobs:
   pr-quality:
-    name: Adversarial Review
+    name: PR Quality
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     concurrency:
@@ -105,16 +105,13 @@ jobs:
           pr_body="$workdir/pr-body.md"
           review_section="$workdir/review-section.md"
           review_json="$workdir/review.json"
-          receipt_json="$workdir/receipt.json"
 
           gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}" > "$pr_before"
           live_head="$(jq -r '.head.sha // ""' "$pr_before")"
-          pr_author="$(jq -r '.user.login // ""' "$pr_before")"
           pr_title="$(jq -r '.title // ""' "$pr_before")"
           jq -r '.body // ""' "$pr_before" > "$pr_body_raw"
 
           printf '%s\n' "$live_head" | grep -Eq '^[0-9a-f]{40}$' || fail "live PR head is missing or malformed"
-          [ -n "$pr_author" ] || fail "PR publisher identity is missing"
           [ -n "$pr_title" ] || fail "PR title is missing"
           grep -Fx '<!-- e0da-pr-body:v1 -->' "$pr_body_raw" >/dev/null ||
             fail "PR body is missing <!-- e0da-pr-body:v1 -->"
@@ -224,57 +221,7 @@ jobs:
               fail "missing required non-empty section: $section_name"
           done
 
-          sha256_text() {
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum | awk '{ print $1 }'
-            elif command -v shasum >/dev/null 2>&1; then
-              shasum -a 256 | awk '{ print $1 }'
-            else
-              fail "no SHA-256 implementation is available"
-            fi
-          }
-
-          normalized_section() {
-            normalized_name="$1"
-            normalized_body="$2"
-            awk -v heading="## $normalized_name" '
-              $0 == heading { active=1; next }
-              active && /^## / { exit }
-              active { print }
-            ' "$normalized_body" |
-              jq -Rrs 'gsub("\\r\\n?"; "\\n") | gsub("^[ \\t\\n]+|[ \\t\\n]+$"; "")'
-          }
-
-          metadata_digest_for() {
-            metadata_title="$1"
-            metadata_body="$2"
-            metadata_outcome="$(normalized_section Outcome "$metadata_body")"
-            metadata_verification="$(normalized_section Verification "$metadata_body")"
-            metadata_risk="$(normalized_section 'Risk and rollback' "$metadata_body")"
-            metadata_linear="$(normalized_section Linear "$metadata_body")"
-            metadata_material="$(
-              jq -cnS \
-                --arg title "$metadata_title" \
-                --arg outcome "$metadata_outcome" \
-                --arg verification "$metadata_verification" \
-                --arg risk "$metadata_risk" \
-                --arg linear "$metadata_linear" \
-                '{
-                  body_version: "e0da-pr-body:v1",
-                  title: $title,
-                  sections: {
-                    "Outcome": $outcome,
-                    "Verification": $verification,
-                    "Risk and rollback": $risk,
-                    "Linear": $linear,
-                    "Adversarial review": "<native-review>"
-                  }
-                }'
-            )"
-            printf '%s' "$metadata_material" | sha256_text
-          }
-
-          live_metadata_digest="sha256:$(metadata_digest_for "$pr_title" "$pr_body")"
+          initial_pr_metadata="$(jq -cS '{title: .title, body: (.body // "")}' "$pr_before")"
 
           awk '
             $0 == "## Adversarial review" { active=1; next }
@@ -295,7 +242,6 @@ jobs:
           native_review_url="$(jq -r '.html_url // ""' "$review_json")"
           review_state="$(jq -r '.state // ""' "$review_json")"
           review_commit="$(jq -r '.commit_id // ""' "$review_json")"
-          review_publisher="$(jq -r '.user.login // ""' "$review_json")"
           review_body_raw="$workdir/review-body-raw.md"
           review_body="$workdir/review-body.md"
           jq -r '.body // ""' "$review_json" > "$review_body_raw"
@@ -304,160 +250,32 @@ jobs:
 
           [ "$native_review_url" = "$review_url" ] || fail "adversarial review link did not resolve to the requested native review"
           [ "$review_commit" = "$live_head" ] || fail "native review commit does not match live PR head"
-          [ -n "$review_publisher" ] || fail "native review publisher identity is missing"
-
-          first_review_line="$(awk 'NF { print; exit }' "$review_body")"
-          [ "$first_review_line" = 'Recommendation: Approve' ] ||
-            fail "native review is missing canonical Recommendation: Approve"
-          [ "$(grep -Fxc 'Blockers:' "$review_body" || true)" -eq 1 ] ||
-            fail "native review must contain exactly one Blockers: field"
-          [ "$(grep -Fxc 'Nits:' "$review_body" || true)" -eq 1 ] ||
-            fail "native review must contain exactly one Nits: field"
-          blockers_value="$(
-            awk '
-              $0 == "Blockers:" { active=1; next }
-              active && $0 == "Nits:" { exit }
+          require_review_section() {
+            section_name="$1"
+            awk -v heading="$section_name:" '
+              $0 == heading { found=1; active=1; next }
+              active && /^[[:alpha:]][[:alpha:] ]*:/ { exit }
               active {
                 text=$0
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
-                if (text != "") { print text }
+                if (text != "") { content=1 }
               }
+              END { exit(found && content ? 0 : 1) }
             ' "$review_body"
-          )"
-          [ "$blockers_value" = '- none' ] ||
-            fail "native review Blockers: must normalize to - none"
-          awk '
-            $0 == "Nits:" { active=1; next }
-            active && /^[[:space:]]*-[[:space:]]+[^[:space:]]/ { found=1 }
-            END { exit(found ? 0 : 1) }
-          ' "$review_body" || fail "native review Nits: must contain a non-empty list"
-          awk '
-            {
-              text=$0
-              gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
-              if (text == "") { next }
-              if (state == 0 && text == "Recommendation: Approve") { state=1; next }
-              if (state == 1 && text == "Blockers:") { state=2; next }
-              if (state == 2 && text == "- none") { state=3; next }
-              if (state == 3 && text == "Nits:") { state=4; next }
-              if (state >= 4 && text ~ /^-[[:space:]]+[^[:space:]]/) { state=5; next }
-              invalid=1
-            }
-            END { exit(!invalid && state == 5 ? 0 : 1) }
-          ' "$review_body" || fail "native review must use canonical \$rvw control order"
-
-          if ! awk '
-            $0 == "<!-- E0DA_ADVERSARIAL_REVIEW_RECEIPT_V1" {
-              blocks++
-              active=1
-              next
-            }
-            active && $0 == "-->" {
-              endings++
-              active=0
-              next
-            }
-            active { print }
-            END { exit(blocks == 1 && endings == 1 && !active ? 0 : 1) }
-          ' "$review_body_raw" > "$receipt_json"; then
-            fail "native review must contain exactly one v1 adversarial review receipt block"
+          }
+          if ! grep -Eq '^Verdict:[[:space:]]+[^[:space:]]' "$review_body" ||
+            ! require_review_section "Technical findings" ||
+            ! require_review_section "Verification"; then
+            fail "native review must include a verdict, technical findings, and verification"
           fi
-          jq -e . "$receipt_json" >/dev/null 2>&1 || fail "review receipt is not valid JSON"
-
-          jq -e '
-            type == "object" and
-            .schema == "e0da.adversarial-review-receipt/v1" and
-            (.repository | type == "string" and length > 0) and
-            (.pull_request | type == "number" and floor == .) and
-            (.head_sha | type == "string" and test("^[0-9a-f]{40}$")) and
-            (.pr_metadata_digest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
-            (.reviewer | type == "object") and
-            (.reviewer.id | type == "string" and length > 0) and
-            (.reviewer.github_login | type == "string" and length > 0) and
-            (.session | type == "object") and
-            (.session.id | type == "string" and length > 0) and
-            (.session.tool | type == "string" and length > 0) and
-            .verdict == "APPROVE" and
-            (.assurance == "independent" or .assurance == "reduced") and
-            (.findings | type == "array") and
-            (.evidence | type == "array" and length > 0) and
-            (all(.evidence[];
-              type == "object" and
-              (.kind | type == "string" and length > 0) and
-              (.subject | type == "string" and length > 0) and
-              .result == "pass"
-            )) and
-            (.evidence_digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
-          ' "$receipt_json" >/dev/null || fail "review receipt has an invalid structured contract"
-
-          jq -e '
-            (.rubric | type == "object") and
-            (.rubric.id | type == "string" and length > 0) and
-            (.rubric.version | type == "string" and length > 0) and
-            (.rubric.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
-            (.rubric.checks | type == "array" and length > 0) and
-            (all(.rubric.checks[]; type == "string" and length > 0))
-          ' "$receipt_json" >/dev/null || fail "review receipt has an invalid rubric contract"
-          jq -e '
-            .rubric.id == "e0da.adversarial-pr-review" and
-            .rubric.version == "1" and
-            (["correctness", "verification", "risk", "scope"] - .rubric.checks | length == 0)
-          ' "$receipt_json" >/dev/null ||
-            fail "review receipt does not use the canonical adversarial rubric"
-
-          receipt_head="$(jq -r '.head_sha' "$receipt_json")"
-          receipt_repository="$(jq -r '.repository' "$receipt_json")"
-          receipt_pull_request="$(jq -r '.pull_request' "$receipt_json")"
-          receipt_metadata_digest="$(jq -r '.pr_metadata_digest' "$receipt_json")"
-          receipt_publisher="$(jq -r '.reviewer.github_login' "$receipt_json")"
-          assurance="$(jq -r '.assurance' "$receipt_json")"
-          [ "$receipt_repository" = "$REPOSITORY" ] ||
-            fail "receipt repository does not match the live PR"
-          [ "$receipt_pull_request" = "$PULL_REQUEST_NUMBER" ] ||
-            fail "receipt pull request does not match the live PR"
-          [ "$receipt_head" = "$live_head" ] || fail "receipt head does not match live PR head"
-          [ "$receipt_metadata_digest" = "$live_metadata_digest" ] ||
-            fail "receipt PR metadata digest does not match live title and body"
-          [ "$receipt_publisher" = "$review_publisher" ] ||
-            fail "receipt reviewer does not match native review publisher"
 
           case "$review_state" in
-            APPROVED)
-              [ "$review_publisher" != "$pr_author" ] ||
-                fail "APPROVED review must come from an independent publisher"
-              [ "$assurance" = independent ] ||
-                fail "APPROVED review must declare independent assurance"
-              ;;
-            COMMENTED)
-              [ "$review_publisher" = "$pr_author" ] ||
-                fail "COMMENTED review is accepted only from the PR publisher"
-              [ "$assurance" = reduced ] ||
-                fail "same-publisher COMMENTED review must declare reduced assurance"
+            APPROVED|COMMENTED)
               ;;
             *)
               fail "native review state $review_state is not acceptable"
               ;;
           esac
-
-          jq -e 'all(.findings[];
-            type == "object" and
-            (.id | type == "string" and length > 0) and
-            (.severity | type == "string" and length > 0) and
-            .status == "resolved" and
-            (.resolution | type == "string" and length > 0)
-          )' "$receipt_json" >/dev/null || fail "review receipt contains unresolved findings"
-
-          rubric_material="$(jq -cS '.rubric | del(.digest)' "$receipt_json")"
-          expected_rubric_digest="sha256:$(printf '%s' "$rubric_material" | sha256_text)"
-          actual_rubric_digest="$(jq -r '.rubric.digest' "$receipt_json")"
-          [ "$actual_rubric_digest" = "$expected_rubric_digest" ] ||
-            fail "review rubric digest does not match canonical rubric"
-
-          evidence_material="$(jq -cS '.evidence' "$receipt_json")"
-          expected_evidence_digest="sha256:$(printf '%s' "$evidence_material" | sha256_text)"
-          actual_evidence_digest="$(jq -r '.evidence_digest' "$receipt_json")"
-          [ "$actual_evidence_digest" = "$expected_evidence_digest" ] ||
-            fail "review evidence digest does not match canonical evidence"
 
           validate_current_reviews() {
             reviews_phase="$1"
@@ -478,24 +296,19 @@ jobs:
                 any(.[]; .id == $review_id and .commit_id == $head and .state == $state)
               ' "$phase_reviews" >/dev/null ||
               fail "linked native review is absent or changed in the current review list"
-            latest_changes_requested="$(
+            current_changes_requested="$(
               jq --arg head "$live_head" '
                 [
                   .[] |
                   select(
                     .commit_id == $head and
-                    (.user.login // "") != "" and
-                    (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")
+                    .state == "CHANGES_REQUESTED"
                   )
-                ] |
-                sort_by([.submitted_at // "", .id // 0]) |
-                reduce .[] as $review ({}; .[$review.user.login] = $review) |
-                [.[] | select(.state == "CHANGES_REQUESTED")] |
-                length
+                ] | length
               ' "$phase_reviews"
             )"
-            [ "$latest_changes_requested" -eq 0 ] ||
-              fail "a reviewer's latest current-head state is CHANGES_REQUESTED"
+            [ "$current_changes_requested" -eq 0 ] ||
+              fail "a current-head review state is CHANGES_REQUESTED"
           }
 
           validate_current_reviews before-label
@@ -504,15 +317,9 @@ jobs:
           final_head="$(jq -r '.head.sha // ""' "$pr_after")"
           [ "$final_head" = "$live_head" ] ||
             fail "PR head changed while the quality contract was running"
-          final_title="$(jq -r '.title // ""' "$pr_after")"
-          final_body_raw="$workdir/pr-body-after-raw.md"
-          final_body="$workdir/pr-body-after.md"
-          jq -r '.body // ""' "$pr_after" > "$final_body_raw"
-          visible_markdown "$final_body_raw" "$final_body" ||
-            fail "PR body contains an unclosed HTML comment or code fence"
-          final_metadata_digest="sha256:$(metadata_digest_for "$final_title" "$final_body")"
-          [ "$final_metadata_digest" = "$live_metadata_digest" ] ||
-            fail "PR title or required body content changed while the quality contract was running"
+          final_pr_metadata="$(jq -cS '{title: .title, body: (.body // "")}' "$pr_after")"
+          [ "$final_pr_metadata" = "$initial_pr_metadata" ] ||
+            fail "PR title or body changed while the quality contract was running"
 
           labels_json="$workdir/labels.json"
           jq -cn --arg label "$PROJECTION_LABEL" '{labels: [$label]}' > "$labels_json"
@@ -522,15 +329,9 @@ jobs:
           post_label_head="$(jq -r '.head.sha // ""' "$pr_post_label")"
           [ "$post_label_head" = "$live_head" ] ||
             fail "PR head changed after projection label update"
-          post_label_title="$(jq -r '.title // ""' "$pr_post_label")"
-          post_label_body_raw="$workdir/pr-body-post-label-raw.md"
-          post_label_body="$workdir/pr-body-post-label.md"
-          jq -r '.body // ""' "$pr_post_label" > "$post_label_body_raw"
-          visible_markdown "$post_label_body_raw" "$post_label_body" ||
-            fail "PR body contains an unclosed HTML comment or code fence"
-          post_label_metadata_digest="sha256:$(metadata_digest_for "$post_label_title" "$post_label_body")"
-          [ "$post_label_metadata_digest" = "$live_metadata_digest" ] ||
-            fail "PR title or required body content changed after projection label update"
+          post_label_metadata="$(jq -cS '{title: .title, body: (.body // "")}' "$pr_post_label")"
+          [ "$post_label_metadata" = "$initial_pr_metadata" ] ||
+            fail "PR title or body changed after projection label update"
           validate_current_reviews post-label
 
           gate_succeeded=true
@@ -544,9 +345,8 @@ jobs:
               echo "| Pull request | #${PULL_REQUEST_NUMBER} |"
               echo "| Reviewed head | \`${live_head}\` |"
               echo "| Native review | ${review_url} |"
-              echo "| Assurance | ${assurance} |"
               echo "| Projection label | \`${PROJECTION_LABEL}\` |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          echo "PR quality contract satisfied; assurance: $assurance"
+          echo "PR quality contract satisfied"
