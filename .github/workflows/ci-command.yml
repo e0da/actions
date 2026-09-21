@@ -1,0 +1,56 @@
+name: CI Command
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the command job. Callers must choose their admitted compute lane explicitly."
+        required: true
+        type: string
+      command:
+        description: "Caller-owned build and test command."
+        required: true
+        type: string
+      working-directory:
+        description: "Repository-relative directory in which to run the command."
+        required: false
+        type: string
+        default: "."
+      dotnet-version:
+        description: "Optional .NET SDK version passed to actions/setup-dotnet. Empty skips .NET setup."
+        required: false
+        type: string
+        default: ""
+      python-version:
+        description: "Optional Python version passed to actions/setup-python. Empty skips Python setup."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  command:
+    name: Build / Test
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up .NET
+        if: inputs.dotnet-version != ''
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Set up Python
+        if: inputs.python-version != ''
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Run caller command
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          CALLER_COMMAND: ${{ inputs.command }}
+        run: bash -lc "$CALLER_COMMAND"
