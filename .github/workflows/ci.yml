@@ -77,6 +77,7 @@ jobs:
           sh tests/approval_gate.sh
           sh tests/pr_quality.sh
           sh tests/actions_self_ci_arc_route.sh
+          sh tests/ci_command_contract.sh
           sh tests/ci_typescript_bun_contract.sh
           sh tests/ci_node_npm_contract.sh
           bash tests/deploy_k3s_ghcr_auth.sh

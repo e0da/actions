@@ -31,6 +31,30 @@ stack process for repos that use Graphite.
 Callers can override `runner` when both baseline jobs should run on a different
 runner label, for example `puck-linux-arm64`.
 
+### `ci-command.yml` — Caller-owned build and test commands
+
+Runs one caller-owned command on an explicitly selected runner. This is the
+shared orchestration contract for repositories whose build spans toolchains or
+does not fit a language-specific workflow. The product repository keeps its
+build and test logic in a script or task target; this workflow checks out the
+repository, optionally installs requested .NET and Python versions, and invokes
+that command.
+
+`runner` and `command` are required. Callers can also set `working-directory`,
+`dotnet-version`, and `python-version`. Empty language-version inputs leave the
+runner toolchain unchanged.
+
+```yaml
+jobs:
+  portable:
+    uses: e0da/actions/.github/workflows/ci-command.yml@main
+    with:
+      runner: product-linux-arm64
+      dotnet-version: "8.0.x"
+      python-version: "3.13"
+      command: scripts/check portable
+```
+
 ### `approval-gate.yml` — Advisory approval report
 
 Advisory report that accepts either a real GitHub `APPROVED` review or a real
