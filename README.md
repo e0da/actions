@@ -38,11 +38,15 @@ shared orchestration contract for repositories whose build spans toolchains or
 does not fit a language-specific workflow. The product repository keeps its
 build and test logic in a script or task target; this workflow checks out the
 repository, optionally installs requested .NET and Python versions, and invokes
-that command.
+that command. .NET installs into the runner's temporary directory so non-root
+self-hosted runners do not need write access to `/usr/share/dotnet`; the caller
+command receives the same `DOTNET_INSTALL_DIR` value.
 
 `runner` and `command` are required. Callers can also set `working-directory`,
-`dotnet-version`, and `python-version`. Empty language-version inputs leave the
-runner toolchain unchanged.
+`dotnet-version`, and `python-version`. Debian and Ubuntu callers can pass
+space-delimited package names through `system-deps`; each name is validated and
+installed before language setup and the caller command. Empty language-version
+inputs leave the runner toolchain unchanged.
 
 ```yaml
 jobs:
@@ -50,6 +54,7 @@ jobs:
     uses: e0da/actions/.github/workflows/ci-command.yml@main
     with:
       runner: product-linux-arm64
+      system-deps: cmake build-essential ninja-build
       dotnet-version: "8.0.x"
       python-version: "3.13"
       command: scripts/check portable

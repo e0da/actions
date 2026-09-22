@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: "."
+      system-deps:
+        description: "Optional space-delimited Debian package names installed before the caller command."
+        required: false
+        type: string
+        default: ""
       dotnet-version:
         description: "Optional .NET SDK version passed to actions/setup-dotnet. Empty skips .NET setup."
         required: false
@@ -36,6 +41,46 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        if: ${{ inputs.system-deps != '' }}
+        env:
+          SYSTEM_DEPS: ${{ inputs.system-deps }}
+        run: |
+          if [[ -z "$SYSTEM_DEPS" ]]; then
+            exit 0
+          fi
+
+          read -r -a packages <<< "$SYSTEM_DEPS"
+          for package in "${packages[@]}"; do
+            if [[ ! "$package" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]; then
+              echo "invalid Debian package name: $package" >&2
+              exit 1
+            fi
+          done
+
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "system-deps requires a Debian or Ubuntu runner with apt-get" >&2
+            exit 1
+          fi
+
+          apt=(apt-get)
+          if [[ "$(id -u)" -ne 0 ]]; then
+            if ! command -v sudo >/dev/null 2>&1; then
+              echo "system-deps requires root or passwordless sudo" >&2
+              exit 1
+            fi
+            apt=(sudo apt-get)
+          fi
+
+          "${apt[@]}" update -q
+          "${apt[@]}" install -y --no-install-recommends -- "${packages[@]}"
+
+      - name: Configure .NET install directory
+        if: inputs.dotnet-version != ''
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        run: printf '%s\n' "DOTNET_INSTALL_DIR=$DOTNET_INSTALL_DIR" >> "$GITHUB_ENV"
 
       - name: Set up .NET
         if: inputs.dotnet-version != ''
