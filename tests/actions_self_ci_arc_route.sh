@@ -18,8 +18,12 @@ ci_route_count="$(
     .github/workflows/ci.yml
 )"
 
-[ "$ci_route_count" = "2" ] ||
-  fail ".github/workflows/ci.yml should route both self-CI jobs to actions-linux-arm64"
+ci_job_count="$(
+  awk '/^jobs:$/ { jobs=1; next } jobs && /^  [a-zA-Z0-9_-]+:$/ { count++ } END { print count + 0 }' \
+    .github/workflows/ci.yml
+)"
+[ "$ci_job_count" -ge 2 ] && [ "$ci_route_count" = "$ci_job_count" ] ||
+  fail ".github/workflows/ci.yml should route every self-CI job to actions-linux-arm64"
 
 if grep -F "runs-on: [self-hosted, puck-linux-arm64]" .github/workflows/ci.yml >/dev/null; then
   fail ".github/workflows/ci.yml still routes self-CI jobs to puck-linux-arm64"

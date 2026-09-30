@@ -1,0 +1,104 @@
+{
+  "purpose": "Final portable staging source; dependencies reconstructable from pinned lock",
+  "files": [
+    {
+      "path": "package.json",
+      "sha256": "67f46b19bddb02cb7c9b7f188fc12604aa992d50dfcd0ce4cb6833d1dc0835b7"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "039a07badf3eef236faaf31cebd15c92015ffa82f8bcf2cddb1f897f60363804"
+    },
+    {
+      "path": "README.md",
+      "sha256": "699ef642fe26e0596052a773c48973685bb311588ac987a53c89a363d3e14ceb"
+    },
+    {
+      "path": "runtime.example.json",
+      "sha256": "06fc109b8453d1e60d341eec9958b0ea1538039f10b86fd98107cb5244248a8c"
+    },
+    {
+      "path": "src/graders.mjs",
+      "sha256": "c412db3f46530a5542c53a61bd645436b187c9f2737d6c7272407e32a469c6c3"
+    },
+    {
+      "path": "src/historical-regrade.mjs",
+      "sha256": "1efc2ebe580476790da93180144e6fd579cd5b242d6216d1155b8db6fbaa040d"
+    },
+    {
+      "path": "src/providers.mjs",
+      "sha256": "3faf2b450f0c5efd2d27efe953aa994cf35e4ec1b155ff776e144f36eb60affd"
+    },
+    {
+      "path": "src/run.mjs",
+      "sha256": "5535bd67e0613b12b500bb83261f2afb67f74b2b1e9671ebf136c3520df784a3"
+    },
+    {
+      "path": "src/trial-provider.mjs",
+      "sha256": "7fcd41baac48e87ed4c083fba38a793c8bc75300309af595ad3dbae976a73df5"
+    },
+    {
+      "path": "src/view.mjs",
+      "sha256": "245951a82091f0c70ef3a097f598a4f8690b1ef149606cfa96aa09d77f50ca88"
+    },
+    {
+      "path": "tests/graders.test.mjs",
+      "sha256": "0dacd8ed6239d7a0be94f5e2ee23cb3e4e0cd0435ab2f6c0297066667c3748cc"
+    },
+    {
+      "path": "tests/historical.test.mjs",
+      "sha256": "21187d37b4713fb888cb07b7640997c0e113d86ba8779e0d9cd3e8f700c7439a"
+    },
+    {
+      "path": "tests/provider-binding.test.mjs",
+      "sha256": "2106dc88ca4ab7871fe06725cede5ea6cef145aff600b18ffb79b12224a0ef5d"
+    },
+    {
+      "path": "tests/trial.test.mjs",
+      "sha256": "b8604a4778fa168cc3346b78d468699724a3cc5f101f98d755162292ea20cd39"
+    },
+    {
+      "path": "tests/view.test.mjs",
+      "sha256": "9d8fc246511f2b900ec3e37f8ad441c14e6edbb3c279f33ce965ae44ccebfe29"
+    },
+    {
+      "path": "fixtures/oracle.cjs",
+      "sha256": "1f8e8ceba70c2bc513a2a24b202a5d138c0217fec077effc01b45a511fecc5fc"
+    },
+    {
+      "path": "fixtures/repair-contract/TASK.md",
+      "sha256": "8095e2ed86419faa63f4b571e79eb92d315e3a218cd8daa7e21d492dde5c93a1"
+    },
+    {
+      "path": "fixtures/repair-contract/lib/admission.cjs",
+      "sha256": "2140b53de5ef1ded1854cf7af0a7f9f4e7b4b816c65b1b536e16160b39f463a6"
+    },
+    {
+      "path": "fixtures/repair-contract/lib/range.cjs",
+      "sha256": "6d16213831fa7ed5e7e4ba9edb741e130b5dfeca331f4c6b6acd773c7d9f4eda"
+    },
+    {
+      "path": "fixtures/repair-contract/package.json",
+      "sha256": "b83e5d75c4115c3f67352c0394d8e4fb8c22d20c0f7e0c529147a3677f1babee"
+    },
+    {
+      "path": "fixtures/repair-contract/test/contracts.test.cjs",
+      "sha256": "b0c394a1119ca88c55334cf4e74f180341e90a2d61d57430dbd069fd487e4308"
+    }
+  ],
+  "additionalFiles": [
+    {
+      "path": ".gitignore",
+      "sha256": "6e7c5272bd381a2a26f37bda1083e4ee08b9bfbf1e70beaf7dc17e6654304c08"
+    }
+  ],
+  "source": "Agency corpus 0418.f04e.converge.harness/eval-harness",
+  "intentionalDeltas": [
+    "src/run.mjs and src/view.mjs: correct update-disable variable, disable sharing/remote generation",
+    "src/run.mjs: retain native eval id and optional operation-bound result receipt",
+    "package.json: add publish command; src/publish.mjs and src/publication-run.mjs implement bound export/import/archive",
+    "README.md: document adopted source, service/operator, idempotency and incomplete OpenCode provider accounting",
+    "tests/publication-run.test.mjs: interleaved operation binding regression",
+    "src/providers.mjs + src/opencode-turn.mjs and focused fixtures/tests: exact current-turn prompt/route/parent/final identity and complete native-step accounting, replay-qualified without paid reruns"
+  ]
+}

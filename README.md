@@ -536,3 +536,9 @@ Future `actions/` directory will house composite actions for:
 - Release tagging (`git describe` → GitHub Release)
 - Graphite stack validation
 - Bun lockfile freshness check
+
+## Native agency evaluations
+
+See [tools/agency-eval](tools/agency-eval/) for the native qualification suite and
+one command to publish comparable results and trial evidence to durable Puck
+Promptfoo storage. Provider logins remain on the executing host.

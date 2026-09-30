@@ -96,3 +96,20 @@ jobs:
           sh tests/wiki_bundled_hosted_drift.sh
           sh tests/wiki_bundled_link_evidence.sh
           sh tests/wiki_verification_minimal_contract.sh
+
+  agency-native-evals:
+    name: Native Eval Contracts
+    runs-on: actions-linux-arm64
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    defaults:
+      run:
+        working-directory: tools/agency-eval
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
