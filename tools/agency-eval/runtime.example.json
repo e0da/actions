@@ -1,0 +1,14 @@
+{
+  "candidates": [
+    { "label": "codex:sol6.1-medium", "kind": "codex", "provider": "openai:codex-sdk",
+      "config": { "model": "gpt-6.1-sol", "model_reasoning_effort": "medium" },
+      "context": "Existing CODEX_HOME, native instructions and config; exact history exported" },
+    { "label": "claude:opus5.5", "kind": "claude", "provider": "anthropic:claude-agent-sdk",
+      "config": { "model": "claude-opus-5-5" },
+      "context": "SDK setting_sources empty; native login required; read/edit tools only" },
+    { "label": "opencode:go-m3", "kind": "opencode", "provider": "opencode:sdk",
+      "workspaceRoot": "/absolute/path/within/the/accepted/fresh/personal/fixture",
+      "config": { "baseUrl": "http://127.0.0.1:4097", "provider_id": "opencode-go", "model": "minimax-m3" },
+      "context": "Existing isolated personal server; per-trial scoped permissions and no shell" }
+  ]
+}

@@ -41,7 +41,7 @@ for forbidden in \
   scripts/pr-quality-review \
   assurance
 do
-  if rg -F "$forbidden" "$workflow" "$self_workflow" "$contract_doc" "$readme"; then
+  if grep -F "$forbidden" "$workflow" "$self_workflow" "$contract_doc" "$readme"; then
     echo "PR quality contract still contains retired review bookkeeping: $forbidden" >&2
     exit 1
   fi

@@ -1,0 +1,9 @@
+# Repair admission and range contracts
+
+This dependency-free package has two broken source modules. Inspect and repair both, run `npm test` if your runtime permits shell execution, and finish with a concise delivery receipt naming your changes and test results. If execution is unavailable, explicitly report tests not run. Modify source in `lib/`; preserve the exported interfaces. Additional tests are welcome. No network or dependencies are needed.
+
+`admit(state, request, now)` uses state `{ ids: string[], accepted: object[], version: number }` and request `{ id: string, expiresAt: number, ... }`. State is well formed and version is a nonnegative safe integer below `Number.MAX_SAFE_INTEGER`. Validate that id is a nonempty string and that now and expiresAt are nonnegative safe integers. Invalid requests return `{ accepted: false, reason: 'invalid' }`. Expiry is inclusive: when `now >= expiresAt`, return reason `expired`. Next reject existing ids with reason `duplicate`. These rejection paths must leave all state unchanged. Only after validation, expiry and duplicate checks append the id and the original request object to their arrays, increase version by one, and return `{ accepted: true, reason: 'accepted' }`. Expiry takes precedence over duplicate. Successful calls preserve the existing array identities.
+
+`sliceCodePoints(text, start, count)` returns a string slice or `null` when invalid. Require a string and nonnegative safe integer start and count. Positions and counts refer to Unicode code points, including astral characters, not UTF-16 code units. The entire requested range must fit; no truncation or overflow is permitted. Empty ranges at any valid position, including the end, return `''`. Reject starts beyond the end even with zero count. Do not mutate inputs.
+
+Visible tests are a starting point. A separate grader executes these contracts against delivered source files.
