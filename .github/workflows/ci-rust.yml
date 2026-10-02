@@ -44,6 +44,11 @@ on:
         required: false
         type: string
         default: ubuntu-latest
+      persistent-target:
+        description: Reuse Cargo artifacts outside checkout on a persistent runner
+        required: false
+        type: boolean
+        default: false
       toolchain:
         required: false
         type: string
@@ -88,8 +93,20 @@ jobs:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
       NATS_TEST_URL: ${{ inputs.nats-test-url }}
+      CARGO_INCREMENTAL: ${{ inputs.persistent-target && '1' || '0' }}
 
     steps:
+      - name: Select persistent Cargo target
+        if: ${{ inputs.persistent-target }}
+        env:
+          CARGO_CI_TOOLCHAIN: ${{ inputs.toolchain }}
+        shell: sh
+        run: |
+          set -eu
+          test -n "$RUNNER_TOOL_CACHE"
+          printf 'CARGO_TARGET_DIR=%s/cargo-target/%s/%s\n' \
+            "$RUNNER_TOOL_CACHE" "$GITHUB_REPOSITORY" "$CARGO_CI_TOOLCHAIN" >> "$GITHUB_ENV"
+
       - name: Check out repository
         uses: actions/checkout@v5
         with:
@@ -242,6 +259,7 @@ jobs:
           done
 
       - name: Restore Rust cache
+        if: ${{ !inputs.persistent-target }}
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1-rust-nobin

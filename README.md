@@ -233,13 +233,23 @@ contract JSON snippet to validate requested capabilities before setup runs.
 
 ### `ci-rust.yml` — Rust repos
 
+Persistent runners can opt into `persistent-target: true`. Cargo then keeps
+artifacts under `$RUNNER_TOOL_CACHE/cargo-target/$GITHUB_REPOSITORY/<toolchain>`,
+outside the checkout cleaned by `actions/checkout`, and enables incremental
+compilation. This mode skips the dependency-cache restore/save step so that it
+does not compress or remove the retained build products. Cargo still checks
+source, compiler, profile and feature fingerprints, and every invocation runs
+formatting, Clippy, the test suite and the workspace build. It requires a
+persistent runner with a writable tool-cache directory. Existing ephemeral
+callers retain the default dependency-cache behavior.
+
 Runs `cargo fmt`, `cargo clippy`, `cargo nextest`, and `cargo build`.
 
 Callers can override `runner`, the Rust toolchain, feature flags, test args,
 and apt system dependencies. The workflow installs `rustup` when a self-hosted
 runner does not already provide it, then installs the requested toolchain. For
 integration tests that need NATS, callers can set `start-nats-jetstream: true` and
-`nats-test-url: nats://localhost:4222`. Rust dependency and target caches stay
+`nats-test-url: nats://localhost:4222`. By default, Rust dependency and target caches stay
 enabled, but `${CARGO_HOME}/bin` is not cached; executable Rust tools are owned
 by the runner image or explicit install steps, not by restored cache state. The
 Rust cache namespace is `v1-rust-nobin`, which intentionally avoids restoring
