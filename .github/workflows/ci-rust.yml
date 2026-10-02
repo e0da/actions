@@ -49,6 +49,11 @@ on:
         required: false
         type: boolean
         default: false
+      cache-save:
+        description: Save Rust caches after the job
+        required: false
+        type: boolean
+        default: true
       toolchain:
         required: false
         type: string
@@ -265,6 +270,7 @@ jobs:
           prefix-key: v1-rust-nobin
           shared-key: ${{ inputs.toolchain }}-${{ runner.os }}
           cache-bin: "false"
+          save-if: ${{ inputs.cache-save }}
 
       - name: Install cargo-nextest from prebuilt binaries
         uses: taiki-e/install-action@v2
