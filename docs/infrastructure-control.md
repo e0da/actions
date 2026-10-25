@@ -24,5 +24,5 @@ never blindly dispatch another deployment. Workflow cancellation is not proof
 that a rollout was undone. Existing image-existence, digest-roll, readiness and
 rollback logic remains the sole executor.
 
-See [Platform contract](../../platform/docs/infrastructure-control.md) and
-[Ops outage guide](../../ops/docs/infrastructure-control-outage.md).
+See [Platform contract](https://github.com/e0da/platform/blob/gauge/infrastructure-control/docs/infrastructure-control.md) and
+[Ops outage guide](https://github.com/e0da/ops/blob/gauge/infrastructure-control/docs/infrastructure-control-outage.md).
