@@ -557,3 +557,9 @@ Future `actions/` directory will house composite actions for:
 See [tools/agency-eval](tools/agency-eval/) for the native qualification suite and
 one command to publish comparable results and trial evidence to durable Puck
 Promptfoo storage. Provider logins remain on the executing host.
+
+## Infrastructure control
+
+[Execution boundary](docs/infrastructure-control.md) documents the offline typed
+deployment-plan validator and its relationship to the existing digest-roll
+workflow, Platform request receipts, and Stack initiation.
