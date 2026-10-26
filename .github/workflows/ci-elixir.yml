@@ -33,6 +33,16 @@ on:
         required: false
         type: string
         default: read-write
+      toolchain-cache-mode:
+        description: "Downloaded BEAM tool cache: off (default) or read-write. No project build outputs are included."
+        required: false
+        type: string
+        default: "off"
+      toolchain-cache-salt:
+        description: "Optional extra namespace; platform, exact versions and action revision always remain in the key."
+        required: false
+        type: string
+        default: ""
       beam-mode:
         description: "BEAM setup policy. setup-beam preserves hosted behavior; runner-preinstalled uses erl/elixir/mix already on PATH."
         required: false
@@ -56,6 +66,7 @@ jobs:
       - name: Validate policy modes
         env:
           CACHE_MODE: ${{ inputs.cache-mode }}
+          TOOLCHAIN_CACHE_MODE: ${{ inputs.toolchain-cache-mode }}
           BEAM_MODE: ${{ inputs.beam-mode }}
         run: |
           set -eu
@@ -69,6 +80,11 @@ jobs:
               ;;
           esac
 
+          case "$TOOLCHAIN_CACHE_MODE" in
+            read-write|off) ;;
+            *) echo "::error::Unknown toolchain-cache-mode. Expected read-write or off."; exit 1 ;;
+          esac
+
           case "$BEAM_MODE" in
             setup-beam|runner-preinstalled)
               ;;
@@ -80,10 +96,44 @@ jobs:
 
       - uses: actions/checkout@v5
 
+      - name: Identify immutable toolchain cache
+        id: beam-platform
+        if: inputs.beam-mode == 'setup-beam' && inputs.toolchain-cache-mode == 'read-write'
+        env:
+          OTP_VERSION: ${{ inputs.otp-version }}
+          ELIXIR_VERSION: ${{ inputs.elixir-version }}
+        run: |
+          set -eu
+          printf '%s\n' "$OTP_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' || {
+            echo '::error::Toolchain caching requires an exact OTP version, not a range.'; exit 1;
+          }
+          printf '%s\n' "$ELIXIR_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || {
+            echo '::error::Toolchain caching requires an exact Elixir version, not a range.'; exit 1;
+          }
+          if [ -r /etc/os-release ]; then
+            identity="$(sha256sum /etc/os-release | cut -d ' ' -f 1)"
+          elif command -v sw_vers >/dev/null 2>&1; then
+            identity="$(sw_vers | shasum -a 256 | cut -d ' ' -f 1)"
+          else
+            echo '::error::Unsupported toolchain cache platform fingerprint.'; exit 1
+          fi
+          printf 'identity=%s\n' "$identity" >> "$GITHUB_OUTPUT"
+
+      - name: Cache downloaded BEAM tools
+        id: beam-download-cache
+        if: inputs.beam-mode == 'setup-beam' && inputs.toolchain-cache-mode == 'read-write'
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ runner.tool_cache }}/otp
+            ${{ runner.tool_cache }}/elixir
+          key: beam-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.beam-platform.outputs.identity }}-54075bcc5e249e4758d363f27d099f55d843f124-${{ inputs.otp-version }}-${{ inputs.elixir-version }}-${{ inputs.toolchain-cache-salt }}
+
       - name: Set up BEAM
         if: inputs.beam-mode == 'setup-beam'
-        uses: erlef/setup-beam@v1
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         with:
+          version-type: ${{ inputs.toolchain-cache-mode == 'read-write' && 'strict' || 'loose' }}
           otp-version: ${{ inputs.otp-version }}
           elixir-version: ${{ inputs.elixir-version }}
 
@@ -180,4 +230,6 @@ jobs:
         run: ${{ inputs.deps-command }}
 
       - name: Run CI
+        env:
+          BEAM_DOWNLOAD_CACHE_HIT: ${{ steps.beam-download-cache.outputs.cache-hit }}
         run: ${{ inputs.ci-command }}
