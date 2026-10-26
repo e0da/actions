@@ -1,0 +1,42 @@
+name: Qualify BEAM download cache
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-elixir.yml
+      - .github/workflows/qualify-beam-cache.yml
+      - tests/beam_cache_qualification.exs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cold:
+    uses: ./.github/workflows/ci-elixir.yml
+    with:
+      runner: actions-linux-arm64
+      otp-version: "29.0.2"
+      elixir-version: "1.20.1"
+      cache-mode: "off"
+      toolchain-cache-mode: read-write
+      toolchain-cache-salt: qualification-${{ github.run_id }}-${{ github.run_attempt }}
+      deps-command: ":"
+      ci-command: |
+        test "$BEAM_DOWNLOAD_CACHE_HIT" != true
+        elixir tests/beam_cache_qualification.exs
+
+  warm:
+    needs: cold
+    uses: ./.github/workflows/ci-elixir.yml
+    with:
+      runner: actions-linux-arm64
+      otp-version: "29.0.2"
+      elixir-version: "1.20.1"
+      cache-mode: "off"
+      toolchain-cache-mode: read-write
+      toolchain-cache-salt: qualification-${{ github.run_id }}-${{ github.run_attempt }}
+      deps-command: ":"
+      ci-command: |
+        test "$BEAM_DOWNLOAD_CACHE_HIT" = true
+        elixir tests/beam_cache_qualification.exs
