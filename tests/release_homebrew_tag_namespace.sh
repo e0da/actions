@@ -104,3 +104,27 @@ grep -F "archive=\"\${ARTIFACT_NAME}-\${safe_ref}-\${HOMEBREW_FORMULA}.tar.gz\""
   fail "artifact name must remain source-tag-derived"
 
 echo "release homebrew tag namespace contract ok"
+
+baseline="$fixture_dir/baseline.sh"
+awk '
+  /# release-notes-baseline-script:start/ { capture = 1; next }
+  /# release-notes-baseline-script:end/ { capture = 0 }
+  capture { sub(/^          /, ""); print }
+' "$workflow" > "$baseline"
+printf '\nprintf "baseline=%%s\\n" "$previous_tag"\n' >> "$baseline"
+mkdir "$fixture_dir/repo"
+git -C "$fixture_dir/repo" init -q
+git -C "$fixture_dir/repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm initial
+git -C "$fixture_dir/repo" tag mcog/v0.1.0
+run_baseline() {
+  (cd "$fixture_dir/repo" && RELEASE_NOTES_START_TAG="${1:-}" SOURCE_TAG_PREFIX=mcog/ GITHUB_REF_NAME=mcog/v0.1.0 major=0 minor=1 patch=0 sh -e "$baseline")
+}
+[ "$(run_baseline)" = 'baseline=' ] || fail "first namespaced release must not require a nonexistent prior version"
+git -C "$fixture_dir/repo" tag mcog/v0.0.1
+if run_baseline >/dev/null 2>&1; then
+  fail "missing derived baseline must still fail when earlier product history exists"
+fi
+if run_baseline missing-explicit-tag >/dev/null 2>&1; then
+  fail "an explicit missing baseline must never become an initial release"
+fi
+echo "first namespaced release baseline contract ok"

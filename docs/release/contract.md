@@ -33,3 +33,5 @@ Private-tap callers using `GitHubPrivateReleaseAssetDownloadStrategy` set
 `homebrew-private-asset: true`. Formula updates use the published asset's API
 URL and preserve the download-strategy argument. Public formulas retain the
 ordinary release download URL.
+
+For the first namespaced product tag, an absent derived previous version is treated as an initial release only when no other tag exists in that product namespace. An explicit missing baseline, or a missing baseline with existing product history, still fails.

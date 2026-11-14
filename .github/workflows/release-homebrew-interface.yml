@@ -491,6 +491,7 @@ jobs:
           $source_version
           EOF
 
+          # release-notes-baseline-script:start
           previous_tag=$RELEASE_NOTES_START_TAG
           if [ -z "$previous_tag" ]; then
             if [ "$patch" -gt 0 ]; then
@@ -502,9 +503,16 @@ jobs:
             fi
           fi
           if [ -n "$previous_tag" ] && ! git rev-parse --verify --quiet "refs/tags/$previous_tag" >/dev/null; then
-            echo "derived SemVer release-notes baseline is absent: $previous_tag; set release-notes-start-tag explicitly." >&2
-            exit 1
+            prior_product_tags=$(git tag --list "${SOURCE_TAG_PREFIX}v*" | awk -v current="$GITHUB_REF_NAME" '$0 != current')
+            if [ -z "$RELEASE_NOTES_START_TAG" ] && [ -n "$SOURCE_TAG_PREFIX" ] && [ -z "$prior_product_tags" ]; then
+              previous_tag=""
+            else
+              echo "derived SemVer release-notes baseline is absent: $previous_tag; set release-notes-start-tag explicitly." >&2
+              exit 1
+            fi
           fi
+
+          # release-notes-baseline-script:end
 
           if [ -n "$previous_tag" ]; then
             generated=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
