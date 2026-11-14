@@ -119,7 +119,7 @@ require_literal "$workflow" "published release notes do not name the source repo
 require_literal "$workflow" "if: inputs.homebrew-formula-path != ''"
 require_literal "$workflow" "FORMULA_PATH: \${{ inputs.homebrew-formula-path }}"
 require_literal "$workflow" "not found in \$GH_REPO — author it once by hand first"
-require_literal "$workflow" "sed -E \"s#^(  url \\\").*(\\\")\\\$#\\\\1\${url}\\\\2#\""
+require_literal "$workflow" 'homebrew-formula-bump:start'
 require_literal "$workflow" "sed -E \"s#^(  version \\\").*(\\\")\\\$#\\\\1\${version}\\\\2#\""
 require_literal "$workflow" "sed -E \"s#^(  sha256 \\\").*(\\\")\\\$#\\\\1\${sha256}\\\\2#\""
 require_literal "$workflow" "gh api -X PUT \"repos/\$GH_REPO/contents/\$FORMULA_PATH\""

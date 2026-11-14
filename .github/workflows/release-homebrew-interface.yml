@@ -102,6 +102,11 @@ on:
         required: false
         type: string
         default: ""
+      source-tag-prefix:
+        description: "Source product namespace to strip before the v-prefixed version, for example mcog/. Empty preserves existing source tags."
+        required: false
+        type: string
+        default: ""
       release-notes-start-tag:
         description: "Explicit source tag at which generated release notes begin; required when the SemVer baseline cannot be derived safely."
         required: false
@@ -122,6 +127,11 @@ on:
         required: false
         type: string
         default: ""
+      homebrew-private-asset:
+        description: "Use the authenticated GitHub asset API URL when bumping a private-tap formula."
+        required: false
+        type: boolean
+        default: false
     secrets:
       HOMEBREW_GITHUB_API_TOKEN:
         required: false
@@ -136,6 +146,8 @@ jobs:
       contents: write
     outputs:
       destination-tag: ${{ steps.release-tag.outputs.destination-tag }}
+      source-tag: ${{ steps.release-tag.outputs.source-tag }}
+      source-version: ${{ steps.release-tag.outputs.source-version }}
 
     steps:
       - name: Check out repository
@@ -201,9 +213,29 @@ jobs:
         shell: sh
         env:
           RELEASE_TAG_PREFIX: ${{ inputs.release-tag-prefix }}
+          SOURCE_TAG_PREFIX: ${{ inputs.source-tag-prefix }}
         run: |
           set -eu
           # release-tag-namespace-script:start
+          source_tag="$GITHUB_REF_NAME"
+          if [ -n "${SOURCE_TAG_PREFIX:-}" ]; then
+            case "$SOURCE_TAG_PREFIX" in
+              *[!a-z0-9/-]*) echo "invalid source-tag-prefix" >&2; exit 2 ;;
+            esac
+            if ! printf '%s\n' "$SOURCE_TAG_PREFIX" | LC_ALL=C grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*/$'; then
+              echo "invalid source-tag-prefix" >&2
+              exit 2
+            fi
+            if [ "$GITHUB_REF_TYPE" = tag ]; then
+              case "$source_tag" in
+                "$SOURCE_TAG_PREFIX"v*) source_tag=${source_tag#"$SOURCE_TAG_PREFIX"} ;;
+                *)
+                  echo "source tag does not match source-tag-prefix" >&2
+                  exit 2
+                  ;;
+              esac
+            fi
+          fi
           if [ -n "$RELEASE_TAG_PREFIX" ]; then
             case "$RELEASE_TAG_PREFIX" in
               *[!a-z0-9-]*)
@@ -224,8 +256,12 @@ jobs:
               exit 2
             fi
           fi
-          destination_tag="${RELEASE_TAG_PREFIX}${GITHUB_REF_NAME}"
-          echo "destination-tag=$destination_tag" >> "$GITHUB_OUTPUT"
+          destination_tag="${RELEASE_TAG_PREFIX}${source_tag}"
+          {
+            echo "destination-tag=$destination_tag"
+            echo "source-tag=$source_tag"
+            echo "source-version=${source_tag#v}"
+          } >> "$GITHUB_OUTPUT"
           # release-tag-namespace-script:end
 
       - name: Run release metadata
@@ -440,9 +476,11 @@ jobs:
           RELEASE_NOTES_START_TAG: ${{ inputs.release-notes-start-tag }}
           RELEASE_ACCESS_SCOPE: ${{ inputs.release-access-scope }}
           RELEASE_NOTES_FILE: ${{ inputs.release-notes-file }}
+          SOURCE_TAG: ${{ steps.release-tag.outputs.source-tag }}
+          SOURCE_TAG_PREFIX: ${{ inputs.source-tag-prefix }}
         run: |
           set -eu
-          source_version=${GITHUB_REF_NAME#v}
+          source_version=${SOURCE_TAG#v}
           source_version=${source_version%%-*}
           source_version=${source_version%%+*}
           if ! printf '%s\n' "$source_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -456,11 +494,11 @@ jobs:
           previous_tag=$RELEASE_NOTES_START_TAG
           if [ -z "$previous_tag" ]; then
             if [ "$patch" -gt 0 ]; then
-              previous_tag="v$major.$minor.$((patch - 1))"
+              previous_tag="${SOURCE_TAG_PREFIX}v$major.$minor.$((patch - 1))"
             elif [ "$minor" -gt 0 ]; then
-              previous_tag="v$major.$((minor - 1)).0"
+              previous_tag="${SOURCE_TAG_PREFIX}v$major.$((minor - 1)).0"
             elif [ "$major" -gt 0 ]; then
-              previous_tag="v$((major - 1)).0.0"
+              previous_tag="${SOURCE_TAG_PREFIX}v$((major - 1)).0.0"
             fi
           fi
           if [ -n "$previous_tag" ] && ! git rev-parse --verify --quiet "refs/tags/$previous_tag" >/dev/null; then
@@ -562,6 +600,7 @@ jobs:
         shell: sh
         env:
           DESTINATION_TAG: ${{ needs.release-interface.outputs.destination-tag }}
+          SOURCE_TAG: ${{ needs.release-interface.outputs.source-tag }}
           GH_TOKEN: ${{ (inputs.release-repo != '' && inputs.release-repo != github.repository) && secrets.RELEASE_REPO_TOKEN || github.token }}
           GH_REPO: ${{ inputs.release-repo != '' && inputs.release-repo || github.repository }}
         run: |
@@ -606,7 +645,7 @@ jobs:
           # release-asset-reconciliation:end
 
           if [ "$release_exists" = false ]; then
-            case "$GITHUB_REF_NAME" in
+            case "$SOURCE_TAG" in
               *-*) prerelease_args="--prerelease --latest=false" ;;
               *) prerelease_args="" ;;
             esac
@@ -632,13 +671,20 @@ jobs:
           GH_TOKEN: ${{ (inputs.release-repo != '' && inputs.release-repo != github.repository) && secrets.RELEASE_REPO_TOKEN || github.token }}
           GH_REPO: ${{ inputs.release-repo != '' && inputs.release-repo || github.repository }}
           FORMULA_PATH: ${{ inputs.homebrew-formula-path }}
+          VERSION: ${{ needs.release-interface.outputs.source-version }}
+          PRIVATE_ASSET: ${{ inputs.homebrew-private-asset }}
         run: |
+          # homebrew-formula-bump:start
           set -eu
           set -- *.tar.gz
           archive="$1"
           sha256=$(awk '{print $1}' "$archive.sha256")
-          version="${GITHUB_REF_NAME#v}"
+          version="$VERSION"
           url="https://github.com/$GH_REPO/releases/download/$DESTINATION_TAG/$archive"
+          if [ "$PRIVATE_ASSET" = true ]; then
+            url=$(gh api "repos/$GH_REPO/releases/tags/$DESTINATION_TAG" \
+              | jq -er --arg name "$archive" '.assets[] | select(.name == $name) | .url')
+          fi
 
           # Bumps the three release-volatile fields of an already-authored
           # formula (desc/homepage/test/depends_on stay human-owned); this is
@@ -651,7 +697,7 @@ jobs:
           sha=$(printf '%s' "$existing" | jq -r '.sha')
           content=$(printf '%s' "$existing" | jq -r '.content' | base64 -d)
           updated=$(printf '%s\n' "$content" \
-            | sed -E "s#^(  url \").*(\")\$#\\1${url}\\2#" \
+            | sed -E "s#^(  url \").*(\")(,?)\$#\\1${url}\\2\\3#" \
             | sed -E "s#^(  version \").*(\")\$#\\1${version}\\2#" \
             | sed -E "s#^(  sha256 \").*(\")\$#\\1${sha256}\\2#")
 
@@ -677,6 +723,7 @@ jobs:
             -f message="${GITHUB_REF_NAME}: bump url/version/sha256" \
             -f content="$content_b64" \
             -f sha="$sha"
+          # homebrew-formula-bump:end
 
   homebrew-proof:
     name: Homebrew Installed Proof
