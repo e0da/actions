@@ -111,7 +111,9 @@ awk '
   /# release-notes-baseline-script:end/ { capture = 0 }
   capture { sub(/^          /, ""); print }
 ' "$workflow" > "$baseline"
-printf '\nprintf "baseline=%%s\\n" "$previous_tag"\n' >> "$baseline"
+cat >> "$baseline" <<'EOF'
+printf 'baseline=%s\n' "$previous_tag"
+EOF
 mkdir "$fixture_dir/repo"
 git -C "$fixture_dir/repo" init -q
 git -C "$fixture_dir/repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm initial
