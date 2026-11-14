@@ -115,3 +115,5 @@ against retained native transcripts; original published qualification rows
 remain unchanged and must be compared using their retained native totals.
 Costs describe API-equivalent native estimates, not subscription cash charges. Upstream export timestamps vary per transfer, so idempotent ingestion
 compares all exported fields except `metadata.exportedAt`.
+
+The offline contract tests (`npm test`) run with Node alone, without installing SDK dependencies. CI runs that same test command without `npm ci`; install the dependencies when running live SDK evaluations.

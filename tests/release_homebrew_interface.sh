@@ -220,3 +220,19 @@ cmp -s "$fixture_dir/gitconfig.before" "$fixture_dir/home/.gitconfig" ||
   fail "failed Homebrew command changed preexisting global Git config"
 
 echo "release homebrew interface workflow ok"
+
+notes_test_dir="$fixture_dir/notes"
+mkdir "$notes_test_dir"
+awk '/# caller-release-notes-script:start/ { copying=1; next } /# caller-release-notes-script:end/ { copying=0 } copying { sub(/^            /, ""); print }' "$workflow" > "$notes_test_dir/append.sh"
+[ -s "$notes_test_dir/append.sh" ] || fail "caller release-note append script is required"
+RELEASE_NOTES_FILE='' sh "$notes_test_dir/append.sh" > "$notes_test_dir/empty"
+[ ! -s "$notes_test_dir/empty" ] || fail "unconfigured caller notes must preserve existing output"
+printf '%s\n' '## Version decision' '0.2.0: fixes only, E0D-2043.' > "$notes_test_dir/decision.md"
+RELEASE_NOTES_FILE="$notes_test_dir/decision.md" sh "$notes_test_dir/append.sh" > "$notes_test_dir/output"
+grep -qF '0.2.0: fixes only, E0D-2043.' "$notes_test_dir/output" || fail "caller version decision must reach release notes"
+if RELEASE_NOTES_FILE="$notes_test_dir/missing.md" sh "$notes_test_dir/append.sh" > /dev/null 2>&1; then
+  fail "configured missing release notes must fail before publication"
+fi
+if RELEASE_NOTES_FILE="$notes_test_dir/empty" sh "$notes_test_dir/append.sh" > /dev/null 2>&1; then
+  fail "configured empty release notes must fail before publication"
+fi

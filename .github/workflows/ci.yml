@@ -101,8 +101,6 @@ jobs:
     name: Native Eval Contracts
     runs-on: actions-linux-arm64
     timeout-minutes: 15
-    env:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     defaults:
       run:
         working-directory: tools/agency-eval
@@ -111,5 +109,4 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-      - run: npm ci --no-audit --no-fund
       - run: npm test

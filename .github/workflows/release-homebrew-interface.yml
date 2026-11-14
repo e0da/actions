@@ -107,6 +107,11 @@ on:
         required: false
         type: string
         default: ""
+      release-notes-file:
+        description: "Optional source-repository Markdown file included in release notes before provenance; a configured file must be non-empty."
+        required: false
+        type: string
+        default: ""
       release-access-scope:
         description: "Human-readable distribution access scope recorded in the release provenance."
         required: false
@@ -434,6 +439,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NOTES_START_TAG: ${{ inputs.release-notes-start-tag }}
           RELEASE_ACCESS_SCOPE: ${{ inputs.release-access-scope }}
+          RELEASE_NOTES_FILE: ${{ inputs.release-notes-file }}
         run: |
           set -eu
           source_version=${GITHUB_REF_NAME#v}
@@ -489,6 +495,16 @@ jobs:
               echo "Compare: initial release...$GITHUB_REF_NAME"
             fi
             echo
+            # caller-release-notes-script:start
+            if [ -n "${RELEASE_NOTES_FILE:-}" ]; then
+              if [ ! -s "$RELEASE_NOTES_FILE" ]; then
+                echo "configured release-notes-file is missing or empty: $RELEASE_NOTES_FILE" >&2
+                exit 1
+              fi
+              cat "$RELEASE_NOTES_FILE"
+              echo
+            fi
+            # caller-release-notes-script:end
             echo "## Provenance"
             echo "Source: $GITHUB_REPOSITORY@$GITHUB_SHA"
             echo "Source tag: $GITHUB_REF_NAME"
