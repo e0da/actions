@@ -29,7 +29,7 @@ resolve_tag() {
   source_tag="$2"
   output="$fixture_dir/output"
   : > "$output"
-  RELEASE_TAG_PREFIX="$prefix" GITHUB_REF_NAME="$source_tag" GITHUB_OUTPUT="$output" sh "$resolver" || return $?
+  GITHUB_REF_TYPE="${4:-tag}" SOURCE_TAG_PREFIX="${3:-}" RELEASE_TAG_PREFIX="$prefix" GITHUB_REF_NAME="$source_tag" GITHUB_OUTPUT="$output" sh "$resolver" || return $?
   sed -n 's/^destination-tag=//p' "$output"
 }
 
@@ -41,6 +41,26 @@ resolve_tag() {
   fail "distinct product prefixes must not collide for the same source tag"
 [ "$(resolve_tag "world-modeler-" "v1.2.3-rc.1")" = "world-modeler-v1.2.3-rc.1" ] ||
   fail "product prefix must preserve prerelease source tags"
+[ "$(resolve_tag "mcog-" "mcog/v1.2.3-pre.1" "mcog/")" = "mcog-v1.2.3-pre.1" ] ||
+  fail "a monorepo source namespace must be stripped before destination namespacing"
+grep -Fx 'source-tag=v1.2.3-pre.1' "$fixture_dir/output" >/dev/null ||
+  fail "normalized source tag must be available to notes and publishing"
+grep -Fx 'source-version=1.2.3-pre.1' "$fixture_dir/output" >/dev/null ||
+  fail "formula version must exclude the monorepo namespace"
+[ "$(resolve_tag "mcog-" "282/merge" "mcog/" "branch")" = "mcog-282/merge" ] ||
+  fail "pull-request package proofs must not require a product release tag"
+if resolve_tag "mcog-" "platform/v1.2.3" "mcog/" >/dev/null 2>&1; then
+  fail "another product's tag must not pass the configured source namespace"
+fi
+for invalid_source_prefix in 'mcog' 'mcog//' 'Mcog/' 'mcog;/' 'mcog /'; do
+  if resolve_tag "mcog-" "mcog/v1.2.3" "$invalid_source_prefix" >/dev/null 2>&1; then
+    fail "invalid source tag prefix was accepted: $invalid_source_prefix"
+  fi
+done
+invalid_source_multiline=$(printf 'mcog/\nhax/')
+if resolve_tag "mcog-" "mcog/v1.2.3" "$invalid_source_multiline" >/dev/null 2>&1; then
+  fail "multiline source tag prefix was accepted"
+fi
 
 for invalid_prefix in \
   "World-Modeler-" \
@@ -78,9 +98,35 @@ grep -F "gh release create \"\$DESTINATION_TAG\"" "$workflow" >/dev/null ||
   fail "release creation must use the destination tag"
 grep -F "releases/download/\$DESTINATION_TAG/\$archive" "$workflow" >/dev/null ||
   fail "formula URL must use the destination tag"
-grep -F "version=\"\${GITHUB_REF_NAME#v}\"" "$workflow" >/dev/null ||
+grep -F "VERSION: \${{ needs.release-interface.outputs.source-version }}" "$workflow" >/dev/null ||
   fail "formula version must remain source-tag-derived"
 grep -F "archive=\"\${ARTIFACT_NAME}-\${safe_ref}-\${HOMEBREW_FORMULA}.tar.gz\"" "$workflow" >/dev/null ||
   fail "artifact name must remain source-tag-derived"
 
 echo "release homebrew tag namespace contract ok"
+
+baseline="$fixture_dir/baseline.sh"
+awk '
+  /# release-notes-baseline-script:start/ { capture = 1; next }
+  /# release-notes-baseline-script:end/ { capture = 0 }
+  capture { sub(/^          /, ""); print }
+' "$workflow" > "$baseline"
+cat >> "$baseline" <<'EOF'
+printf 'baseline=%s\n' "$previous_tag"
+EOF
+mkdir "$fixture_dir/repo"
+git -C "$fixture_dir/repo" init -q
+git -C "$fixture_dir/repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm initial
+git -C "$fixture_dir/repo" tag mcog/v0.1.0
+run_baseline() {
+  (cd "$fixture_dir/repo" && RELEASE_NOTES_START_TAG="${1:-}" SOURCE_TAG_PREFIX=mcog/ GITHUB_REF_NAME=mcog/v0.1.0 major=0 minor=1 patch=0 sh -e "$baseline")
+}
+[ "$(run_baseline)" = 'baseline=' ] || fail "first namespaced release must not require a nonexistent prior version"
+git -C "$fixture_dir/repo" tag mcog/v0.0.1
+if run_baseline >/dev/null 2>&1; then
+  fail "missing derived baseline must still fail when earlier product history exists"
+fi
+if run_baseline missing-explicit-tag >/dev/null 2>&1; then
+  fail "an explicit missing baseline must never become an initial release"
+fi
+echo "first namespaced release baseline contract ok"

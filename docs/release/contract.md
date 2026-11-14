@@ -21,3 +21,17 @@ and configured access scope.
 
 The reusable workflow is the enforcement owner. Its contract tests must cover
 every required behavior in this document.
+
+Monorepo callers set `source-tag-prefix` to their product namespace, such as
+`mcog/`, for source tags like `mcog/v0.1.0`. The workflow removes that prefix
+for the formula version and destination tag, while source release notes and
+their baseline retain it. `release-tag-prefix` is a separate destination
+namespace, such as `mcog-`, yielding `mcog-v0.1.0` in a shared asset repository.
+Both inputs default to empty for existing callers.
+
+Private-tap callers using `GitHubPrivateReleaseAssetDownloadStrategy` set
+`homebrew-private-asset: true`. Formula updates use the published asset's API
+URL and preserve the download-strategy argument. Public formulas retain the
+ordinary release download URL.
+
+For the first namespaced product tag, an absent derived previous version is treated as an initial release only when no other tag exists in that product namespace. An explicit missing baseline, or a missing baseline with existing product history, still fails.

@@ -91,6 +91,7 @@ jobs:
           sh tests/release_homebrew_tag_namespace.sh
           python3 tests/release_homebrew_deterministic_archive.py
           python3 tests/release_homebrew_asset_immutability.py
+          python3 tests/release_homebrew_private_formula.py
           sh tests/unity_ci_contract.sh
           sh tests/wiki_bundled_ci_contract.sh
           sh tests/wiki_bundled_hosted_drift.sh
