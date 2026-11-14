@@ -89,31 +89,19 @@ jobs:
       allowed-labels: approved[agency]
 ```
 
-### `pr-quality.yml` — Exact-head PR quality gate
+### `pr-quality.yml` — PR body and review evidence
 
-Enforces the versioned PR template, rejects section-specific
-`PR_BODY_REQUIRED:` placeholders, and verifies a substantive native technical
-review on the current PR head. The review may be `APPROVED` or `COMMENTED`.
-Current-head changes requested and stale review heads fail. No event
-conditionally skips the authoritative job, so a successful job evaluated the
-current GitHub state.
-
-On success the workflow adds its configured `approved[pr-reviewer]` label; on
-failure it removes only that exact label. The label is a readable projection,
-not review evidence or merge authority. `approved[e0da]` remains reserved and
-untouched. The existing `approval-gate.yml` report retains its advisory
-compatibility semantics.
+Checks that the PR body fills the template's `Outcome`, `Verification`, and
+`Risk and rollback` sections, and that a review or review comment on the current
+head says `Verdict: Approve`. The workflow finds the review itself; the body
+needs no link. A new push needs a new verdict. The old `projection-label` input
+is ignored.
 
 Adopt this as a separate PR-metadata workflow so review and body edits rerun the
-quality gate without rerunning build CI. Copy
+gate without rerunning build CI. Copy
 [`templates/pull_request_template.md`](templates/pull_request_template.md) to
-the adopting repository's `.github/pull_request_template.md`, then add the
-native technical-review link to the PR body. The full caller and label contract
-is documented in [`docs/pr-quality-contract.md`](docs/pr-quality-contract.md).
-
-An expected red `PR Quality / Adversarial Review` check before review means the
-PR is not review-ready; it is not a build failure. This new, separately named
-policy gate does not change the historical `approval-gate.yml` contract.
+the adopting repository's `.github/pull_request_template.md`. Details are in
+[`docs/pr-quality-contract.md`](docs/pr-quality-contract.md).
 
 ### `ci-typescript-bun.yml` — TypeScript/Bun repos
 

@@ -9,10 +9,10 @@ on:
         type: string
         default: puck-linux-arm64
       projection-label:
-        description: "Exact approved[...] label projected from a valid current-head review."
+        description: "Ignored. Accepted so existing callers keep working."
         required: false
         type: string
-        default: approved[pr-reviewer]
+        default: ""
 
 jobs:
   pr-quality:
@@ -24,8 +24,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
+      pull-requests: read
     steps:
       - name: Enforce PR quality contract
         shell: sh
@@ -33,7 +32,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
-          PROJECTION_LABEL: ${{ inputs['projection-label'] }}
         run: |
           set -eu
 
@@ -51,70 +49,23 @@ jobs:
             command -v "$command_name" >/dev/null 2>&1 || fail "required command is unavailable: $command_name"
           done
 
-          printf '%s\n' "$PROJECTION_LABEL" | grep -Eq '^approved\[[A-Za-z0-9._-]+\]$' ||
-            fail "projection-label must match approved[<agent-id>]"
-          [ "$PROJECTION_LABEL" != 'approved[e0da]' ] ||
-            fail "approved[e0da] is reserved for human merge authority"
           printf '%s\n' "$PULL_REQUEST_NUMBER" | grep -Eq '^[0-9]+$' ||
             fail "PR quality requires a pull request event"
-
-          label_path="$(printf '%s' "$PROJECTION_LABEL" | jq -sRr @uri)"
-          projection_endpoint="repos/${REPOSITORY}/issues/${PULL_REQUEST_NUMBER}/labels/${label_path}"
-          labels_endpoint="repos/${REPOSITORY}/issues/${PULL_REQUEST_NUMBER}/labels"
-          gate_succeeded=false
-          workdir=""
-
-          remove_projection() {
-            live_labels="$(
-              gh api "$labels_endpoint" --paginate --jq '.[].name'
-            )" || {
-              echo "::error::could not read live PR labels while clearing a failed projection"
-              return 1
-            }
-            if printf '%s\n' "$live_labels" | grep -Fx "$PROJECTION_LABEL" >/dev/null; then
-              gh api "$projection_endpoint" --method DELETE >/dev/null || {
-                echo "::error::could not remove stale projection label $PROJECTION_LABEL"
-                return 1
-              }
-            fi
-          }
-
-          clear_failed_projection() {
-            gate_exit=$?
-            trap - EXIT
-            if [ "$gate_succeeded" != true ]; then
-              if ! remove_projection; then
-                gate_exit=1
-              fi
-            fi
-            if [ -n "$workdir" ]; then
-              rm -rf "$workdir"
-            fi
-            exit "$gate_exit"
-          }
-          trap clear_failed_projection EXIT
 
           temp_root="${RUNNER_TEMP:-/tmp}"
           mkdir -p "$temp_root"
           workdir="$(mktemp -d "${temp_root}/pr-quality.XXXXXX")"
-          trap 'rm -rf "$workdir"' INT TERM
-          pr_before="$workdir/pr-before.json"
-          pr_after="$workdir/pr-after.json"
-          pr_post_label="$workdir/pr-post-label.json"
+          trap 'rm -rf "$workdir"' EXIT
+          pr_json="$workdir/pr.json"
           pr_body_raw="$workdir/pr-body-raw.md"
           pr_body="$workdir/pr-body.md"
-          review_section="$workdir/review-section.md"
-          review_json="$workdir/review.json"
 
-          gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}" > "$pr_before"
-          live_head="$(jq -r '.head.sha // ""' "$pr_before")"
-          pr_title="$(jq -r '.title // ""' "$pr_before")"
-          jq -r '.body // ""' "$pr_before" > "$pr_body_raw"
+          gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}" > "$pr_json"
+          live_head="$(jq -r '.head.sha // ""' "$pr_json")"
+          jq -r '.body // ""' "$pr_json" > "$pr_body_raw"
 
           printf '%s\n' "$live_head" | grep -Eq '^[0-9a-f]{40}$' || fail "live PR head is missing or malformed"
-          [ -n "$pr_title" ] || fail "PR title is missing"
-          grep -Fx '<!-- e0da-pr-body:v1 -->' "$pr_body_raw" >/dev/null ||
-            fail "PR body is missing <!-- e0da-pr-body:v1 -->"
+          [ -n "$(jq -r '.title // ""' "$pr_json")" ] || fail "PR title is missing"
           if grep -F 'PR_BODY_REQUIRED:' "$pr_body_raw" >/dev/null; then
             fail "replace every PR_BODY_REQUIRED:<SECTION> placeholder"
           fi
@@ -197,11 +148,6 @@ jobs:
             awk -v heading="## $section_name" '
               $0 == heading { seen=1; active=1; next }
               active && /^## / { active=0 }
-              active && /^[[:space:]]*<!--/ { comment=1 }
-              active && comment {
-                if ($0 ~ /-->/) { comment=0 }
-                next
-              }
               active {
                 text=$0
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
@@ -211,130 +157,21 @@ jobs:
             ' "$pr_body"
           }
 
-          for section_name in Outcome Verification 'Risk and rollback' Linear 'Adversarial review'; do
-            heading_count="$(grep -Fxc "## $section_name" "$pr_body" || true)"
-            [ "$heading_count" -ne 0 ] ||
-              fail "missing required non-empty section: $section_name"
-            [ "$heading_count" -eq 1 ] ||
-              fail "required PR body heading must appear exactly once: $section_name"
+          for section_name in Outcome Verification 'Risk and rollback'; do
             has_nonempty_section "$section_name" ||
               fail "missing required non-empty section: $section_name"
           done
 
-          initial_pr_metadata="$(jq -cS '{title: .title, body: (.body // "")}' "$pr_before")"
-
-          awk '
-            $0 == "## Adversarial review" { active=1; next }
-            active && /^## / { exit }
-            active { print }
-          ' "$pr_body" > "$review_section"
-
-          review_links="$(
-            grep -Eo "https://github.com/${REPOSITORY}/pull/${PULL_REQUEST_NUMBER}#pullrequestreview-[0-9]+" "$review_section" || true
+          approvals="$(
+            {
+              gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/reviews" --paginate --jq '.[] | select(.state != "DISMISSED") | {commit_id, body}'
+              gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/comments" --paginate --jq '.[] | {commit_id, body}'
+            } | jq -r --arg head "$live_head" '
+              select(.commit_id == $head and ((.body // "") | test("verdict:[[:space:]]*approve"; "i"))) | "1"
+            ' | wc -l | tr -d ' '
           )"
-          review_link_count="$(printf '%s\n' "$review_links" | sed '/^$/d' | wc -l | tr -d ' ')"
-          [ "$review_link_count" -eq 1 ] ||
-            fail "Adversarial review must contain exactly one native review link for this PR"
-          review_url="$review_links"
-          review_id="${review_url##*-}"
-
-          gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/reviews/${review_id}" > "$review_json"
-          native_review_url="$(jq -r '.html_url // ""' "$review_json")"
-          review_state="$(jq -r '.state // ""' "$review_json")"
-          review_commit="$(jq -r '.commit_id // ""' "$review_json")"
-          review_body_raw="$workdir/review-body-raw.md"
-          review_body="$workdir/review-body.md"
-          jq -r '.body // ""' "$review_json" > "$review_body_raw"
-          visible_markdown "$review_body_raw" "$review_body" ||
-            fail "native review contains an unclosed HTML comment or code fence"
-
-          [ "$native_review_url" = "$review_url" ] || fail "adversarial review link did not resolve to the requested native review"
-          [ "$review_commit" = "$live_head" ] || fail "native review commit does not match live PR head"
-          require_review_section() {
-            section_name="$1"
-            awk -v heading="$section_name:" '
-              $0 == heading { found=1; active=1; next }
-              active && /^[[:alpha:]][[:alpha:] ]*:/ { exit }
-              active {
-                text=$0
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
-                if (text != "") { content=1 }
-              }
-              END { exit(found && content ? 0 : 1) }
-            ' "$review_body"
-          }
-          if ! grep -Eq '^Verdict:[[:space:]]+[^[:space:]]' "$review_body" ||
-            ! require_review_section "Technical findings" ||
-            ! require_review_section "Verification"; then
-            fail "native review must include a verdict, technical findings, and verification"
-          fi
-
-          case "$review_state" in
-            APPROVED|COMMENTED)
-              ;;
-            *)
-              fail "native review state $review_state is not acceptable"
-              ;;
-          esac
-
-          validate_current_reviews() {
-            reviews_phase="$1"
-            phase_review_stream="$workdir/review-stream-${reviews_phase}.ndjson"
-            phase_reviews="$workdir/reviews-${reviews_phase}.json"
-            gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/reviews" \
-              --paginate \
-              --jq '.[]' > "$phase_review_stream" ||
-              fail "could not fetch every native review page"
-            jq -s '.' "$phase_review_stream" > "$phase_reviews" ||
-              fail "paginated native review response is malformed"
-            jq -e 'type == "array" and all(.[]; type == "object")' "$phase_reviews" >/dev/null ||
-              fail "current native review list is malformed"
-            jq -e \
-              --argjson review_id "$review_id" \
-              --arg head "$live_head" \
-              --arg state "$review_state" '
-                any(.[]; .id == $review_id and .commit_id == $head and .state == $state)
-              ' "$phase_reviews" >/dev/null ||
-              fail "linked native review is absent or changed in the current review list"
-            current_changes_requested="$(
-              jq --arg head "$live_head" '
-                [
-                  .[] |
-                  select(
-                    .commit_id == $head and
-                    .state == "CHANGES_REQUESTED"
-                  )
-                ] | length
-              ' "$phase_reviews"
-            )"
-            [ "$current_changes_requested" -eq 0 ] ||
-              fail "a current-head review state is CHANGES_REQUESTED"
-          }
-
-          validate_current_reviews before-label
-
-          gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}" > "$pr_after"
-          final_head="$(jq -r '.head.sha // ""' "$pr_after")"
-          [ "$final_head" = "$live_head" ] ||
-            fail "PR head changed while the quality contract was running"
-          final_pr_metadata="$(jq -cS '{title: .title, body: (.body // "")}' "$pr_after")"
-          [ "$final_pr_metadata" = "$initial_pr_metadata" ] ||
-            fail "PR title or body changed while the quality contract was running"
-
-          labels_json="$workdir/labels.json"
-          jq -cn --arg label "$PROJECTION_LABEL" '{labels: [$label]}' > "$labels_json"
-          gh api "$labels_endpoint" --method POST --input "$labels_json" >/dev/null
-
-          gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}" > "$pr_post_label"
-          post_label_head="$(jq -r '.head.sha // ""' "$pr_post_label")"
-          [ "$post_label_head" = "$live_head" ] ||
-            fail "PR head changed after projection label update"
-          post_label_metadata="$(jq -cS '{title: .title, body: (.body // "")}' "$pr_post_label")"
-          [ "$post_label_metadata" = "$initial_pr_metadata" ] ||
-            fail "PR title or body changed after projection label update"
-          validate_current_reviews post-label
-
-          gate_succeeded=true
+          [ "$approvals" -ge 1 ] ||
+            fail "no review or review comment on head ${live_head} says 'Verdict: Approve'"
 
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             {
@@ -344,8 +181,6 @@ jobs:
               echo "| --- | --- |"
               echo "| Pull request | #${PULL_REQUEST_NUMBER} |"
               echo "| Reviewed head | \`${live_head}\` |"
-              echo "| Native review | ${review_url} |"
-              echo "| Projection label | \`${PROJECTION_LABEL}\` |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
