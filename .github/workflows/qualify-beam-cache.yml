@@ -59,7 +59,7 @@ jobs:
       elixir-version: "1.20.1"
       cache-mode: "off"
       toolchain-cache-mode: read-write
-      toolchain-cache-salt: native-proof-${{ github.run_id }}-${{ github.run_attempt }}
+      toolchain-cache-salt: native-proof-static-contract-v3
       result-reuse-environment: ghcr.io/e0da/actions-linux-runner@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
       deps-command: ":"
       ci-command: |
@@ -79,7 +79,7 @@ jobs:
       elixir-version: "1.20.1"
       cache-mode: "off"
       toolchain-cache-mode: read-write
-      toolchain-cache-salt: native-proof-${{ github.run_id }}-${{ github.run_attempt }}
+      toolchain-cache-salt: native-proof-static-contract-v3
       result-reuse-environment: ghcr.io/e0da/actions-linux-runner@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
       deps-command: ":"
       ci-command: |

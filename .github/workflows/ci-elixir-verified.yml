@@ -137,11 +137,12 @@ jobs:
               throw new Error('Result reuse requires one immutable ci-elixir-verified workflow revision in the direct caller');
             }
             const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {encoding: 'utf8'}).trim();
-            const key = 'elixir-proof-v2-' + createHash('sha256').update(JSON.stringify({tree, inputs: process.env.REUSE_INPUTS, platform: process.env.PROOF_PLATFORM, workflow: refs[0]})).digest('hex');
+            const key = 'elixir-proof-v3-' + createHash('sha256').update(JSON.stringify({tree, inputs: process.env.REUSE_INPUTS, platform: process.env.PROOF_PLATFORM, workflow: refs[0]})).digest('hex');
             core.setOutput('key', key);
             core.setOutput('tree', tree);
             core.setOutput('checkout', execFileSync('git', ['rev-parse', 'HEAD'], {encoding: 'utf8'}).trim());
             core.setOutput('workflow', workflowPath);
+            core.setOutput('revision', refs[0]);
 
       - name: Restore prior native proof
         id: proof-cache
@@ -160,6 +161,9 @@ jobs:
           PROOF_KEY: ${{ steps.proof-key.outputs.key }}
           PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
           PROOF_WORKFLOW: ${{ steps.proof-key.outputs.workflow }}
+          PROOF_REVISION: ${{ steps.proof-key.outputs.revision }}
+          PROOF_DEFAULTS: '{"runner":"ubuntu-latest","otp-version":"28","elixir-version":"1.19.5","deps-command":"mix deps.get --only test","ci-command":"mix ci","cache-mode":"read-write","cache-paths":"deps\n_build\n","cache-lock-files":"mix.lock","toolchain-cache-mode":"off","toolchain-cache-salt":"","result-reuse-environment":"","beam-mode":"setup-beam"}'
+          REUSE_INPUTS: ${{ toJSON(inputs) }}
         with:
           script: |
             const fs = require('node:fs');
@@ -180,6 +184,20 @@ jobs:
               const pr = run.pull_requests.find(pr => pr.head.sha === run.head_sha);
               if (!pr || commit.parents.length !== 2 || commit.parents[0].sha !== pr.base.sha || commit.parents[1].sha !== pr.head.sha) return reject('prior merge checkout not bound to run head/base');
             } else if (proof.checkout !== run.head_sha) return reject('prior checkout not bound to run head');
+            const parseYaml = text => JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'puts JSON.generate(YAML.safe_load($stdin.read, aliases: true))'], {input: text, encoding: 'utf8'}));
+            const caller = parseYaml(execFileSync('git', ['show', `HEAD:${process.env.PROOF_WORKFLOW}`], {encoding: 'utf8'}));
+            const producerRef = `e0da/actions/.github/workflows/ci-elixir-verified.yml@${process.env.PROOF_REVISION}`;
+            if (Object.values(caller.jobs).some(call => typeof call.name === 'string' && call.name.includes('$' + '{{'))) return reject('dynamic job names are not statically bound');
+            const candidates = Object.entries(caller.jobs).filter(([id, call]) => call.uses ? job.name.startsWith(`${call.name || id} / `) : job.name === (call.name || id));
+            if (candidates.length !== 1) return reject('API job is not a unique caller job');
+            const [id, call] = candidates[0];
+            if (call.strategy || job.name !== `${call.name || id} / Mix` || call.uses !== producerRef) return reject('API job is not the pinned native producer');
+            const provided = call.with || {};
+            if (Object.values(provided).some(value => typeof value !== 'string' || value.includes('$' + '{{'))) return reject('producer inputs are not statically bound');
+            const expected = JSON.parse(process.env.PROOF_DEFAULTS);
+            Object.assign(expected, provided);
+            const actual = JSON.parse(process.env.REUSE_INPUTS);
+            if (Object.keys(expected).length !== Object.keys(actual).length || Object.entries(expected).some(([name, value]) => actual[name] !== value)) return reject('native producer commands or inputs differ');
             const name = `elixir-native-${proof.job_id}-${proof.key}`;
             const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {...context.repo, run_id: proof.run_id, per_page: 100});
             const matches = artifacts.filter(a => a.name === name && !a.expired);

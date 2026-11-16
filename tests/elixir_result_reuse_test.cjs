@@ -1,19 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {execFileSync} = require('node:child_process');
-const workflow = JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'puts JSON.generate(YAML.load_file(".github/workflows/ci-elixir-verified.yml"))'], {encoding:'utf8'}));
+const [workflow, original] = JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'puts JSON.generate(ARGV.map { |path| YAML.load_file(path) })', '.github/workflows/ci-elixir-verified.yml', '.github/workflows/ci-elixir.yml'], {encoding:'utf8'}));
+const schema = (workflow.on||workflow.true).workflow_call.inputs;
+const actualInputs = Object.fromEntries(Object.entries(schema).map(([k,v])=>[k,v.default]));
+Object.assign(actualInputs, {'result-reuse-environment':'image@sha256:'+'c'.repeat(64)});
+const producerRef = 'e0da/actions/.github/workflows/ci-elixir-verified.yml@'+'a'.repeat(40);
 const steps = workflow.jobs.mix.steps;
 const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 function script(name) { return steps.find(s => s.name === name).with.script; }
 const validProof = {key:'k', tree:'t', repository:'e0da/stack', workflow:'.github/workflows/mcog.yml', checkout:'merge', run_id:10, job_id:20};
-async function verify({proof = {...validProof}, job = {run_id:10, head_sha:'head', status:'completed', conclusion:'success', steps:[{name:'Run CI', status:'completed', conclusion:'success'}], html_url:'proof-url'}, run = {head_sha:'head', path:'.github/workflows/mcog.yml', event:'pull_request', pull_requests:[{head:{sha:'head'},base:{sha:'base'}}]}, commit = {tree:{sha:'t'},parents:[{sha:'base'},{sha:'head'}]}, native = {...validProof}, artifacts, apiError} = {}) {
+async function verify({proof = {...validProof}, job = {run_id:10, name:'mcog / Mix', head_sha:'head', status:'completed', conclusion:'success', steps:[{name:'Run CI', status:'completed', conclusion:'success'}], html_url:'proof-url'}, run = {head_sha:'head', path:'.github/workflows/mcog.yml', event:'pull_request', pull_requests:[{head:{sha:'head'},base:{sha:'base'}}]}, commit = {tree:{sha:'t'},parents:[{sha:'base'},{sha:'head'}]}, native = {...validProof}, artifacts, apiError, caller = {jobs:{mcog:{uses:producerRef,with:actualInputs}}}} = {}) {
   const outputs = {};
   const core = {setOutput:(k,v)=>outputs[k]=v, summary:{addRaw:()=>({write:async()=>{}})}};
   const fs = {readFileSync:()=>JSON.stringify(proof),writeFileSync:()=>{}};
-  const github = {paginate:async()=>artifacts ?? [{id:30,name:'elixir-native-20-k',expired:false}],rest:{actions:{getJobForWorkflowRun:async()=>{if(apiError)throw Error(apiError);return {data:job};},getWorkflowRun:async()=>({data:run}),listWorkflowRunArtifacts(){},downloadArtifact:async()=>({data:Buffer.from('zip')})},git:{getCommit:async()=>({data:commit})}}};
+  const github = {paginate:async()=>artifacts ?? [{id:30,name:'elixir-native-20-k',expired:false}],rest:{actions:{getJobForWorkflowRun:async()=>{if(apiError)throw Error(apiError);return {data:job};},getWorkflowRun:async()=>({data:run}),listWorkflowRunArtifacts(){},downloadArtifact:async()=>({data:Buffer.from('zip')})},git:{getCommit:async()=>({data:commit})},repos:{getContent:async()=>({data:{content:Buffer.from(JSON.stringify(workflow)).toString('base64')}})}}};
   await new AsyncFunction('require','process','core','github','context', script('Verify prior successful native job'))(
-    name => name==='node:fs'?fs:{execFileSync:()=>JSON.stringify(native)},
-    {env:{PROOF_FILE:'receipt', PROOF_KEY:'k', PROOF_TREE:'t',PROOF_WORKFLOW:'.github/workflows/mcog.yml'}}, core, github,
+    name => name==='node:fs'?fs:{execFileSync:(program,args,options)=>program==='ruby'?options.input:program==='git'?JSON.stringify(caller):JSON.stringify(native)},
+    {env:{PROOF_FILE:'receipt', PROOF_KEY:'k', PROOF_TREE:'t',PROOF_WORKFLOW:'.github/workflows/mcog.yml',PROOF_REVISION:'a'.repeat(40),PROOF_DEFAULTS:JSON.stringify(Object.fromEntries(Object.entries(schema).map(([k,v])=>[k,v.default]))),REUSE_INPUTS:JSON.stringify(actualInputs)}}, core, github,
     {repo:{owner:'e0da',repo:'stack'}});
   return outputs.reused;
 }
@@ -44,7 +48,6 @@ for(const refs of [[],['main'],['a'.repeat(40),'b'.repeat(40)]]) test(`rejects a
 
 for(const change of [{'beam-mode':'runner-preinstalled'},{'otp-version':'29'},{'elixir-version':'1.20'},{'result-reuse-environment':'runner:latest'}]) test(`rejects unqualified environment ${JSON.stringify(change)}`,async()=>assert.rejects(()=>identify(['a'.repeat(40)],'tree','Linux-ARM64',JSON.stringify({...policy,...change})),/exact downloaded/));
 test('original native commands, cache paths and input defaults are preserved',()=>{
- const original=JSON.parse(execFileSync('ruby',['-ryaml','-rjson','-e','puts JSON.generate(YAML.load_file(".github/workflows/ci-elixir.yml"))'],{encoding:'utf8'}));
  for(const [name,input] of Object.entries((original.on||original.true).workflow_call.inputs)) assert.deepEqual((workflow.on||workflow.true).workflow_call.inputs[name],input,name);
  for(const before of original.jobs.mix.steps) {
    const after=steps.find(s=>before.name?s.name===before.name:s.uses===before.uses);
@@ -74,3 +77,15 @@ test('artifact is immutable and precedes cache pointer publication',()=>{
  assert.equal(artifact.with.overwrite,false);assert.equal(artifact.with['if-no-files-found'],'error');
  assert.ok(steps.indexOf(artifact)<steps.findIndex(s=>s.name==='Save native execution receipt'));
 });
+
+test('same-run unrelated job and separately uploaded matching artifact cannot attest execution contract',async()=>{
+ assert.equal(await verify({job:{run_id:10,head_sha:'head',name:'unrelated command job',status:'completed',conclusion:'success',steps:[{name:'Run CI',status:'completed',conclusion:'success'}],html_url:'unrelated-job'}}),'false');
+});
+
+for (const call of [{uses:producerRef,with:{...actualInputs,'ci-command':'unrelated command'}},{uses:producerRef,with:{...actualInputs,'ci-command':'${{ inputs.command }}'}},{uses:'other/workflow@'+'a'.repeat(40),with:actualInputs},{uses:producerRef,with:actualInputs,strategy:{matrix:{part:[1,2]}}}]) test(`unbound producer executes native checks ${JSON.stringify(call)}`,async()=>assert.equal(await verify({caller:{jobs:{mcog:call}}}),'false'));
+test('omitted caller inputs resolve from the pinned producer defaults',async()=>assert.equal(await verify({caller:{jobs:{mcog:{uses:producerRef,with:{'result-reuse-environment':actualInputs['result-reuse-environment']}}}}}),'true'));
+
+test('an inline job cannot impersonate the native producer display name',async()=>assert.equal(await verify({caller:{jobs:{mcog:{uses:producerRef,with:actualInputs},other:{name:'mcog / Mix',steps:[]}}}}),'false'));
+test('dynamic caller names cannot authorize proof',async()=>assert.equal(await verify({caller:{jobs:{mcog:{uses:producerRef,with:actualInputs},other:{name:'${{ inputs.name }}',steps:[]}}}}),'false'));
+
+test('producer defaults binding stays identical to workflow input schema',()=>assert.deepEqual(JSON.parse(steps.find(s=>s.id==='proof').env.PROOF_DEFAULTS),Object.fromEntries(Object.entries(schema).map(([k,v])=>[k,v.default]))));

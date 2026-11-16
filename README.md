@@ -238,7 +238,8 @@ Existing `ci-elixir.yml` callers keep their permission and execution contract.
 Pin the verified workflow to one exact commit SHA in the direct caller and set
 `result-reuse-environment` to the immutable runner image reference, including
 `@sha256:…`. The owner must update that identity when the actual runtime changes.
-Only exact downloaded OTP/Elixir versions qualify. Private-dependency jobs always
+Only exact downloaded OTP/Elixir versions qualify. The image must provide Ruby
+with YAML/JSON and unzip for proof verification. Private-dependency jobs always
 execute. Use this only for commands whose inputs are the checkout tree and this
 execution contract; do not use it for title/review checks, external-link checks,
 release proofs or live environment qualification.
@@ -249,7 +250,8 @@ reusable workflow revision. A cached receipt alone never passes the check: the
 API must confirm that its original native job completed successfully and its
 `Run CI` step executed successfully. Failed, cancelled, unfinished or skipped
 proofs execute the native checks. Identity mismatches and API authorization
-failures fail visibly. A reused job cannot mint a new native receipt.
+failures fail visibly. A reused job cannot mint a new native receipt. Dynamic inputs/names, matrix
+callers, ambiguous names and unrelated producer jobs run native checks instead.
 
 The receipt contains only repository, tree/key, checkout commit, workflow path, run ID and job ID. No build
 outputs or credentials are proof. An unsuccessful receipt occupying an immutable
