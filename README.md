@@ -89,15 +89,14 @@ jobs:
       allowed-labels: approved[agency]
 ```
 
-### `pr-quality.yml` — PR body and review evidence
+### `pr-quality.yml` — PR description
 
 Checks that the PR body fills the template's `Outcome`, `Verification`, and
-`Risk and rollback` sections, and that a review or review comment on the current
-head says `Verdict: Approve`. The workflow finds the review itself; the body
-needs no link. A new push needs a new verdict. The old `projection-label` input
-is ignored.
+`Risk and rollback` sections. It does not require an agent verdict comment;
+GitHub repository protection owns any required independent approval. The old
+`projection-label` input is ignored.
 
-Adopt this as a separate PR-metadata workflow so review and body edits rerun the
+Adopt this as a separate PR-metadata workflow so body edits rerun the
 gate without rerunning build CI. Copy
 [`templates/pull_request_template.md`](templates/pull_request_template.md) to
 the adopting repository's `.github/pull_request_template.md`. Details are in
