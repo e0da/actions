@@ -2,6 +2,7 @@
 set -eu
 
 workflow=.github/workflows/pr-quality.yml
+ruby tests/pr_quality_concurrency.rb
 template=templates/pull_request_template.md
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
