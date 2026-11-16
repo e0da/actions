@@ -743,7 +743,7 @@ jobs:
   homebrew-proof:
     name: Homebrew Installed Proof
     needs: [release-interface, publish-github-release]
-    if: inputs.run-homebrew-proof && (needs.publish-github-release.result == 'success' || needs.publish-github-release.result == 'skipped')
+    if: ${{ !cancelled() && inputs.run-homebrew-proof && needs.release-interface.result == 'success' && (needs.publish-github-release.result == 'success' || needs.publish-github-release.result == 'skipped') }}
     runs-on: ${{ inputs.install-runner }}
     permissions:
       contents: read

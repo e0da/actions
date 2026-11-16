@@ -49,6 +49,7 @@ RUNNER_ENVIRONMENT=github-hosted HOMEBREW_BUILD_PACKAGES=elixir sh "$fixture_dir
 
 python3 - <<'PY'
 from pathlib import Path
+import re
 workflow = Path('.github/workflows/release-homebrew-interface.yml').read_text()
 proof = workflow.split('  homebrew-proof:', 1)[1]
 assert proof.index('name: Require isolated Homebrew runner') < proof.index('name: Validate private tap token') < proof.index('brew tap')
@@ -57,6 +58,30 @@ for name in ['environment', 'os', 'arch']:
 build = workflow.split('name: Install Homebrew build packages', 1)[1].split('name: Resolve destination release tag', 1)[0]
 assert build.index('homebrew-build-isolation:start') < build.index('command -v brew') < build.index('brew install')
 assert 'RUNNER_ENVIRONMENT: ${{ runner.environment }}' in build
+
+condition = re.search(r"^    if: (.+)$", proof, re.MULTILINE).group(1)
+condition = condition.removeprefix('${{').removesuffix('}}').strip()
+
+def eligible(build_result, publish_result, is_cancelled, run_proof=True):
+    expression = condition.replace('inputs.run-homebrew-proof', 'run_proof')
+    expression = expression.replace('needs.release-interface.result', 'build_result')
+    expression = expression.replace('needs.publish-github-release.result', 'publish_result')
+    expression = expression.replace('cancelled()', 'is_cancelled')
+    expression = expression.replace('&&', ' and ').replace('||', ' or ')
+    expression = re.sub(r'!(?!=)', 'not ', expression)
+    result = eval(expression, {'__builtins__': {}}, locals())
+    if not re.search(r'\b(?:always|cancelled|success|failure)\(', condition):
+        result = result and build_result == 'success' and publish_result == 'success' and not is_cancelled
+    return result
+
+assert eligible('success', 'skipped', False), 'successful build with publication disabled must reach installed proof'
+assert eligible('success', 'success', False)
+assert not eligible('failure', 'skipped', False)
+assert not eligible('skipped', 'skipped', False)
+assert not eligible('success', 'failure', False)
+assert not eligible('success', 'cancelled', False)
+assert not eligible('success', 'skipped', True)
+assert not eligible('success', 'skipped', False, False)
 PY
 
 echo 'fleet-host Homebrew mutations rejected before tool invocation'
