@@ -9,10 +9,10 @@ on:
         type: string
         default: macos-14
       install-runner:
-        description: "Disposable runner for Homebrew installed proof; self-hosted runners are denied until guest isolation is attested."
+        description: "GitHub-hosted macOS ARM64 runner for Homebrew installed proof; self-hosted runners are denied."
         required: false
         type: string
-        default: macos-14
+        default: macos-15
       release-interface:
         description: "App-owned release interface script."
         required: false
@@ -763,11 +763,17 @@ jobs:
         shell: sh
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          RUNNER_OS: ${{ runner.os }}
+          RUNNER_ARCH: ${{ runner.arch }}
         run: |
           set -eu
           # homebrew-proof-isolation:start
           if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ]; then
             echo "Homebrew installed proof is disabled on self-hosted runners until disposable-guest isolation is attested; host Homebrew must not be mutated." >&2
+            exit 1
+          fi
+          if [ "$RUNNER_OS" != "macOS" ] || [ "$RUNNER_ARCH" != "ARM64" ]; then
+            echo "Homebrew installed proof requires a GitHub-hosted macOS ARM64 VM." >&2
             exit 1
           fi
           # homebrew-proof-isolation:end
