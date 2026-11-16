@@ -87,6 +87,11 @@ on:
         required: false
         type: boolean
         default: true
+      homebrew-proof-only:
+        description: "Qualify the already-published formula without building; requires proof enabled and publication disabled."
+        required: false
+        type: boolean
+        default: false
       installed-smoke-command:
         description: "Optional extra command to run after brew test."
         required: false
@@ -139,8 +144,20 @@ on:
         required: false
 
 jobs:
+  validate-proof-mode:
+    name: Validate installed-only mode
+    if: ${{ inputs.homebrew-proof-only && (inputs.publish-github-release || !inputs.run-homebrew-proof) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject incompatible installed-only inputs
+        shell: sh
+        run: |
+          echo 'homebrew-proof-only requires run-homebrew-proof=true and publish-github-release=false' >&2
+          exit 1
+
   release-interface:
     name: Release Interface Proof
+    if: ${{ !inputs.homebrew-proof-only }}
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: write
@@ -588,7 +605,7 @@ jobs:
   publish-github-release:
     name: Publish GitHub Release Assets
     needs: release-interface
-    if: inputs.publish-github-release && github.ref_type == 'tag'
+    if: ${{ !inputs.homebrew-proof-only && inputs.publish-github-release && github.ref_type == 'tag' }}
     runs-on: ${{ inputs.publish-runner }}
     permissions:
       contents: write
@@ -743,7 +760,7 @@ jobs:
   homebrew-proof:
     name: Homebrew Installed Proof
     needs: [release-interface, publish-github-release]
-    if: ${{ !cancelled() && inputs.run-homebrew-proof && needs.release-interface.result == 'success' && (needs.publish-github-release.result == 'success' || needs.publish-github-release.result == 'skipped') }}
+    if: ${{ !cancelled() && inputs.run-homebrew-proof && (!inputs.homebrew-proof-only || !inputs.publish-github-release) && (needs.release-interface.result == 'success' || (inputs.homebrew-proof-only && needs.release-interface.result == 'skipped')) && (needs.publish-github-release.result == 'success' || needs.publish-github-release.result == 'skipped') }}
     runs-on: ${{ inputs.install-runner }}
     permissions:
       contents: read
@@ -820,8 +837,11 @@ jobs:
         shell: sh
         run: |
           set -eu
+          # homebrew-fetch:start
           brew tap "$HOMEBREW_TAP"
+          brew trust --formula "$HOMEBREW_TAP/$HOMEBREW_FORMULA"
           brew fetch --force "$HOMEBREW_TAP/$HOMEBREW_FORMULA"
+          # homebrew-fetch:end
 
       - name: Install formula
         shell: sh
