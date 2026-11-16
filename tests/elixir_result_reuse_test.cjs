@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {execFileSync} = require('node:child_process');
-const [workflow, original] = JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'puts JSON.generate(ARGV.map { |path| YAML.load_file(path) })', '.github/workflows/ci-elixir-verified.yml', '.github/workflows/ci-elixir.yml'], {encoding:'utf8'}));
+const [workflow, original, qualification] = JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'puts JSON.generate(ARGV.map { |path| YAML.load_file(path) })', '.github/workflows/ci-elixir-verified.yml', '.github/workflows/ci-elixir.yml', '.github/workflows/qualify-beam-cache.yml'], {encoding:'utf8'}));
 const schema = (workflow.on||workflow.true).workflow_call.inputs;
 const actualInputs = Object.fromEntries(Object.entries(schema).map(([k,v])=>[k,v.default]));
 Object.assign(actualInputs, {'result-reuse-environment':'image@sha256:'+'c'.repeat(64),'result-reuse-platform':'Linux-ARM64'});
@@ -189,3 +189,25 @@ test('proof pointer uses the same relative cache path on hosted and native runne
  for(const step of [...admissionSteps,...steps]) if(step.env?.PROOF_FILE) assert.equal(step.env.PROOF_FILE,restore.with.path);
  assert.equal(steps.find(s=>s.name==='Attest native receipt as immutable artifact').with.path,restore.with.path);
 });
+
+test('manual admission fixture pins one source and preserves existing download-cache admission',()=>{
+ const jobs=qualification.jobs;
+ const refs=[...new Set(Object.values(jobs).filter(j=>j.uses?.includes('ci-elixir-verified.yml')).map(j=>j.uses))];
+ assert.equal(refs.length,1);assert.match(refs[0],/@[a-f0-9]{40}$/);
+ assert.deepEqual(jobs['proof-cold'].with,jobs['proof-warm'].with);
+ assert.equal(jobs['proof-cold'].with['result-reuse-platform'],'Linux-ARM64');
+ assert.equal(jobs['force-native'].with['force-native'],true);
+ assert.notEqual(jobs['unqualified-runtime'].with['result-reuse-environment'],jobs['proof-cold'].with['result-reuse-environment']);
+ for(const mode of ['', 'beam-cache','native-proof','force-native','unqualified-runtime']) {
+  for(const id of ['cold','warm']) assert.equal(new Function('inputs','return '+jobs[id].if)({qualification:mode}),mode===''||mode==='beam-cache');
+ }
+});
+async function qualifyFixture(mode='native-proof', change={}) {
+ const passedNative=prefix=>({name:prefix+' / Native',conclusion:'success',steps:['Run CI','Record native execution receipt','Attest native receipt as immutable artifact'].map(name=>({name,conclusion:'success'}))});
+ let jobs=mode==='native-proof' ? [passedNative('proof-cold'),{name:'proof-cold / Mix',conclusion:'success'},{name:'proof-warm / Native',conclusion:'skipped'},{name:'proof-warm / Mix',conclusion:'success'},{name:'proof-warm / Verify prior result',conclusion:'success',steps:[{name:'Verify prior successful native job',conclusion:'success'}]}] : [passedNative(mode),{name:mode+' / Mix',conclusion:'success'}];
+ if(mode!=='native-proof') for(const s of jobs[0].steps) if(s.name!=='Run CI')s.conclusion='skipped';
+ jobs=jobs.map(j=>j.name===change.name?{...j,...change}:j);
+ await new AsyncFunction('github','context','process','core',qualification.jobs['verify-boundary'].steps[0].with.script)({paginate:async()=>jobs,rest:{actions:{listJobsForWorkflowRunAttempt(){}}}},{repo:{owner:'e0da',repo:'actions'},runId:1},{env:{QUALIFICATION:mode,GITHUB_RUN_ATTEMPT:'1'}},{info:()=>{}});
+}
+for(const mode of ['native-proof','force-native','unqualified-runtime']) test(`fixture accepts intended boundary ${mode}`,async()=>await qualifyFixture(mode));
+for(const change of [{name:'proof-warm / Native',conclusion:'success'},{name:'proof-warm / Mix',conclusion:'skipped'},{name:'proof-warm / Verify prior result',conclusion:'failure'},{name:'proof-cold / Native',conclusion:'failure'}]) test(`fixture rejects incorrect boundary ${JSON.stringify(change)}`,async()=>await assert.rejects(()=>qualifyFixture('native-proof',change)));
