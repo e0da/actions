@@ -22,8 +22,10 @@ and configured access scope.
 The reusable workflow is the enforcement owner. Its contract tests must cover
 every required behavior in this document.
 
-Homebrew mutation requires a disposable GitHub-hosted runner. Installed proof
-rejects self-hosted runners before tapping, fetching, uninstalling, installing,
+Homebrew mutation requires a disposable GitHub-hosted runner. Installed proof uses
+`macos-15` by default and requires actual `runner.environment = github-hosted`,
+`runner.os = macOS`, and `runner.arch = ARM64` before any token preflight or
+Homebrew operation. It rejects self-hosted runners before tapping, fetching, uninstalling, installing,
 testing, or running the caller's smoke command. Build-package installation also
 rejects self-hosted runners when packages are requested; fleet builds use tools
 provisioned outside CI. An empty package list performs no Homebrew operations.
@@ -33,7 +35,9 @@ supplies authenticated, job-bound isolation evidence and the workflow validates
 it. A runner label, alternate prefix, environment flag, or guest-local file does
 not establish that boundary. The provider owns guest-only credentials, no host
 Homebrew/home writable mounts, bounded teardown, and authoritative disposal
-evidence. This guard does not claim that provider is implemented.
+evidence. This guard does not claim that provider is implemented. GitHub-hosted
+macOS is the current disposable proof path; a local guest provider is an optional
+future optimization, not a prerequisite for that path.
 
 Monorepo callers set `source-tag-prefix` to their product namespace, such as
 `mcog/`, for source tags like `mcog/v0.1.0`. The workflow removes that prefix
