@@ -78,7 +78,6 @@ jobs:
           sh tests/pr_quality.sh
           sh tests/actions_self_ci_arc_route.sh
           ruby tests/mix_cache_contract.rb
-          bun test ./tests/elixir_result_reuse_test.cjs
           sh tests/ci_command_contract.sh
           sh tests/ci_typescript_bun_contract.sh
           sh tests/ci_node_npm_contract.sh

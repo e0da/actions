@@ -215,72 +215,13 @@ cache-lock-files: elixir/mcog/mix.lock
 ```
 
 `toolchain-cache-mode: read-write` optionally retains only setup-beam’s
-downloaded/extracted OTP and Elixir tools. It defaults to `off`; no existing caller
-is opted in. Strict resolution of exact version inputs, OS/architecture, OS release and the pinned
+downloaded/extracted OTP and Elixir tools. It defaults to `off`; callers opt in explicitly. Strict resolution of exact version inputs, OS/architecture, OS release and the pinned
 setup-beam revision partition this cache, with no broad fallback. GitHub keeps
 cache access repository/branch scoped. Project source, `_build`, credentials and
 test databases are not included in this new cache. `toolchain-cache-salt` adds a
 namespace without removing those identity fields.
 
-The paired `Qualify BEAM download cache` jobs require a fresh miss followed by an
-exact hit and run identical bounded compile/invalidation controls. These controls
-cover source, compile-time configuration and a path dependency under default
-debug/incremental settings; they do not certify every consumer’s generated inputs.
-Compare setup, cache-transfer and total job times before opting a caller in.
-The project cache remains controlled independently by `cache-mode`.
-
-### `ci-elixir-verified.yml` — opt-in identical-tree native proof reuse
-
-A hosted admission job verifies prior native evidence before requesting the
-caller's native runner. An explicit verified hit skips the complete native job.
-A miss, unsupported contract, unavailable evidence or verifier failure runs the
-original native commands. The required final `Mix` job accepts only a verified
-hit with native execution skipped, or successful native execution. A failed or
-skipped verifier cannot by itself produce success. Existing `ci-elixir.yml`
-callers retain their permission and execution contract.
-
-Pin this workflow to one exact commit SHA and grant `actions: read` plus
-`contents: read`. Set `result-reuse-environment` to the exact immutable image
-reference and `result-reuse-platform` to `Linux-ARM64` or `Linux-X64` for the
-native target. This declared target is independent of the hosted verifier's
-platform. Empty inputs disable reuse. `force-native: true` executes native
-checks without producing a reusable receipt.
-
-The actual native provider must expose `E0DA_RUNNER_IMAGE_REF` from the same
-pinned value that renders `container.image`. A missing image ref or mismatched
-native platform/image prevents receipt publication, while native checks still
-run. This protects rollout coherence, not independent runtime attestation:
-job env and root-writable files can be forged. Actual fixture placement/image
-qualification uses an external observer bound to the assigned native runner.
-Consumers remain off until the new admission boundary is reviewed and qualified.
-
-The v5 proof key hashes the actual checkout tree, including the PR merge tree,
-all resolved inputs, target platform, configured immutable runtime identity and
-pinned workflow revision. The verifier requires a successful original native
-job with completed `Run CI`, receipt and immutable artifact upload steps. It
-binds the producer to the same repository, caller, checkout tree, static command
-inputs/defaults and pinned workflow. An exact-key artifact index is only an
-untrusted pointer to that API-verified, job-specific native artifact. Discovery selects the newest active
-index from at most ten exact-name matches with the same source repository; the
-index cannot authorize reuse without the independent producer checks. The
-native job independently recomputes source and actual runtime identity before
-publishing evidence. Reused results never
-mint native receipts.
-
-Only exact downloaded OTP/Elixir toolchains qualify. Private-dependency jobs,
-dynamic inputs/names, matrix callers and ambiguous producers execute native.
-Use reuse only for checkout-and-contract-bound commands; title/review checks,
-external-link checks, release proofs and live environment qualification are not
-eligible. Ruby with YAML/JSON and unzip are needed for hosted verification.
-
-Receipts contain identity metadata, not credentials or build outputs. The proof
-pointer uses `.git/elixir-native-proof.json` in each fresh checkout. Immutable
-artifact transport avoids hosted/native cache compression-version differences
-and can discover proofs across PR refs. An absent or invalid index runs native.
-Index publication is optional and cannot fail otherwise successful native
-execution; successful job-specific attestation remains mandatory for reuse.
-Source tests do not establish hosted latency, avoided queue time or adoption; the
-hosted hit and native fallback paths require separate qualification.
+The project cache remains controlled independently by `cache-mode`. Dependency resolution and CI commands run on every cache hit.
 
 ### `ci-opentofu.yml` — OpenTofu repos
 
