@@ -91,7 +91,7 @@ jobs:
     env:
       PRIVATE_DEPS_PRESENT: ${{ secrets.private_deps_ssh_key != '' }}
     outputs:
-      reused: ${{ steps.checkout.outcome == 'success' && steps.proof-key.outcome == 'success' && steps.proof-cache.outcome == 'success' && steps.proof.outcome == 'success' && steps.proof.outputs.reused == 'true' }}
+      reused: ${{ steps.checkout.outcome == 'success' && steps.proof-key.outcome == 'success' && steps.proof-index.outcome == 'success' && steps.proof.outcome == 'success' && steps.proof.outputs.reused == 'true' }}
     steps:
       - uses: actions/checkout@v5
         id: checkout
@@ -137,19 +137,38 @@ jobs:
             core.setOutput('revision', refs[0]);
             core.setOutput('runtime', runtime);
 
-      - name: Restore prior native proof
+      - name: Find prior native proof
         continue-on-error: true
-        id: proof-cache
+        id: proof-index
         if: steps.proof-key.outputs.key != ''
-        uses: actions/cache/restore@v5
+        uses: actions/github-script@v8
+        env:
+          PROOF_FILE: .git/elixir-native-proof.json
+          PROOF_KEY: ${{ steps.proof-key.outputs.key }}
         with:
-          path: .git/elixir-native-proof.json
-          key: ${{ steps.proof-key.outputs.key }}
+          script: |
+            const fs = require('node:fs');
+            const {execFileSync} = require('node:child_process');
+            const name = `elixir-proof-index-${process.env.PROOF_KEY}`;
+            const {data} = await github.rest.actions.listArtifactsForRepo({...context.repo, name, per_page: 10});
+            const matches = data.artifacts.filter(a => a.name === name && !a.expired && a.workflow_run?.head_repository_id === context.payload.repository.id).sort((a, b) => b.id - a.id);
+            if (!matches.length) {
+              core.setOutput('found', 'false');
+              core.info('Native execution required: no active proof index for this repository and key');
+              return;
+            }
+            const {data: zip} = await github.rest.actions.downloadArtifact({...context.repo, artifact_id: matches[0].id, archive_format: 'zip'});
+            const archive = process.env.PROOF_FILE + '.index.zip';
+            fs.writeFileSync(archive, Buffer.from(zip));
+            const pointer = execFileSync('unzip', ['-p', archive, 'elixir-native-proof.json'], {encoding: 'utf8'});
+            fs.writeFileSync(process.env.PROOF_FILE, pointer);
+            core.setOutput('found', 'true');
+            core.info(`Found untrusted native-proof pointer: artifact ${matches[0].id}`);
 
       - name: Verify prior successful native job
         continue-on-error: true
         id: proof
-        if: steps.proof-cache.outputs.cache-hit == 'true'
+        if: steps.proof-index.outputs.found == 'true'
         uses: actions/github-script@v8
         env:
           PROOF_FILE: .git/elixir-native-proof.json
@@ -206,7 +225,7 @@ jobs:
             fs.writeFileSync(archive, Buffer.from(zip));
             const native = JSON.parse(execFileSync('unzip', ['-p', archive, 'elixir-native-proof.json'], {encoding: 'utf8'}));
             for (const field of ['key', 'tree', 'runtime', 'repository', 'workflow', 'checkout', 'run_id', 'job_id']) {
-              if (native[field] !== proof[field]) return reject('artifact does not attest cached pointer');
+              if (native[field] !== proof[field]) return reject('artifact does not attest discovered pointer');
             }
             core.setOutput('reused', 'true');
             core.info(`Reused native proof: ${job.html_url}; tree ${proof.tree}; immutable artifact ${matches[0].id}`);
@@ -467,12 +486,17 @@ jobs:
           overwrite: false
           include-hidden-files: true
 
-      - name: Save native execution receipt
-        if: steps.proof-key.outputs.key != ''
-        uses: actions/cache/save@v5
+      - name: Publish native proof index
+        if: steps.native-receipt.outputs.artifact != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
         with:
+          name: elixir-proof-index-${{ steps.proof-key.outputs.key }}
           path: .git/elixir-native-proof.json
-          key: ${{ steps.proof-key.outputs.key }}
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+          include-hidden-files: true
 
   mix:
     name: Mix

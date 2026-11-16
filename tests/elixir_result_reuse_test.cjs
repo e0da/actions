@@ -36,7 +36,7 @@ test('only hosted verified success bypasses the complete native job',()=>{
  assert.match(workflow.jobs.native.if,/needs.admission.result == 'success'/);
  assert.match(workflow.jobs.native.if,/needs.admission.outputs.reused == 'true'/);
  assert.equal(steps.some(s=>s.id==='proof'),false);
- assert.equal(steps.some(s=>s.id==='proof-cache'),false);
+ assert.equal(steps.some(s=>s.id==='proof-index'),false);
  assert.match(steps.find(s=>s.id==='proof-key').if,/PRIVATE_DEPS_SSH_KEY == ''/);
  assert.equal(schema['result-reuse-environment'].default,'');
  assert.equal(schema['result-reuse-platform'].default,'');
@@ -84,7 +84,7 @@ test('artifact is immutable and precedes cache pointer publication',()=>{
  const artifact=steps.find(s=>s.name==='Attest native receipt as immutable artifact');
  assert.equal(artifact.with.overwrite,false);assert.equal(artifact.with['if-no-files-found'],'error');
  assert.equal(artifact.with['include-hidden-files'],true);assert.equal(artifact.with.path,'.git/elixir-native-proof.json');
- assert.ok(steps.indexOf(artifact)<steps.findIndex(s=>s.name==='Save native execution receipt'));
+ assert.ok(steps.indexOf(artifact)<steps.findIndex(s=>s.name==='Publish native proof index'));
 });
 
 test('same-run unrelated job and separately uploaded matching artifact cannot attest execution contract',async()=>{
@@ -109,7 +109,7 @@ test('caller cannot provide undeclared native inputs',async()=>assert.equal(awai
 
 for(const observedImage of ['', 'image@sha256:'+'d'.repeat(64)]) test(`missing or mismatched provider image runs native (${observedImage})`,async()=>assert.equal((await identify(['a'.repeat(40)],'tree','Linux-ARM64',JSON.stringify(policy),'.github/workflows/mcog.yml',observedImage)).key,undefined));
 
-test('cached runtime ref must match the verified current runtime',async()=>assert.equal(await verify({proof:{...validProof,runtime:'other-image'}}),'false'));
+test('discovered runtime ref must match the declared native target',async()=>assert.equal(await verify({proof:{...validProof,runtime:'other-image'}}),'false'));
 test('immutable native artifact must attest runtime ref too',async()=>assert.equal(await verify({native:{...validProof,runtime:'other-image'}}),'false'));
 
 const configuredRef='ghcr.io/e0da/actions-linux-runner:arc5@sha256:'+'c'.repeat(64);
@@ -156,9 +156,9 @@ test('gate has no native receipt publication path',()=>{
 });
 
 function gateHit(outcomes, reused='true') {
- const ids=['checkout','proof-key','proof-cache','proof'];
+ const ids=['checkout','proof-key','proof-index','proof'];
  const steps=Object.fromEntries(ids.map((id,i)=>[id,{outcome:outcomes[i],outputs:{reused}}]));
- const expression=workflow.jobs.admission.outputs.reused.slice(3,-2).replaceAll('steps.proof-key','steps["proof-key"]').replaceAll('steps.proof-cache','steps["proof-cache"]');
+ const expression=workflow.jobs.admission.outputs.reused.slice(3,-2).replaceAll('steps.proof-key','steps["proof-key"]').replaceAll('steps.proof-index','steps["proof-index"]');
  return new Function('steps','return '+expression)(steps);
 }
 test('only successful hosted steps can export a verified hit',()=>assert.equal(gateHit(['success','success','success','success']),true));
@@ -181,15 +181,18 @@ test('disabled or force-native inputs avoid hosted proof work',()=>{
  for(const change of [{'result-reuse-environment':''},{'result-reuse-platform':''},{'force-native':true}]) assert.equal(gateAdmitted({...actualInputs,...change}),false);
 });
 
-test('proof pointer uses the same relative cache path on hosted and native runners',()=>{
- const restore=admissionSteps.find(s=>s.name==='Restore prior native proof');
- const save=steps.find(s=>s.name==='Save native execution receipt');
- assert.equal(restore.with.path,'.git/elixir-native-proof.json');
- assert.equal(save.with.path,restore.with.path);
- for(const step of [...admissionSteps,...steps]) if(step.env?.PROOF_FILE) assert.equal(step.env.PROOF_FILE,restore.with.path);
- assert.equal(steps.find(s=>s.name==='Attest native receipt as immutable artifact').with.path,restore.with.path);
+test('proof discovery and index publication use artifact transport only',()=>{
+ const lookup=admissionSteps.find(s=>s.id==='proof-index');
+ const save=steps.find(s=>s.name==='Publish native proof index');
+ assert.equal(lookup.uses,'actions/github-script@v8');
+ assert.equal(save.uses,'actions/upload-artifact@v4');
+ assert.equal(save['continue-on-error'],true);
+ assert.equal(save.with.name,'elixir-proof-index-${{ steps.proof-key.outputs.key }}');
+ assert.equal(save.with.overwrite,false);assert.equal(save.with['include-hidden-files'],true);
+ assert.equal(save.with.path,'.git/elixir-native-proof.json');
+ assert.equal(admissionSteps.some(s=>s.uses?.startsWith('actions/cache')),false);
+ assert.equal(steps.find(s=>s.name==='Attest native receipt as immutable artifact')['continue-on-error'],undefined);
 });
-
 test('manual admission fixture pins one source and preserves existing download-cache admission',()=>{
  const jobs=qualification.jobs;
  const refs=[...new Set(Object.values(jobs).filter(j=>j.uses?.includes('ci-elixir-verified.yml')).map(j=>j.uses))];
@@ -203,7 +206,7 @@ test('manual admission fixture pins one source and preserves existing download-c
  }
 });
 async function qualifyFixture(mode='native-proof', change={}) {
- const passedNative=prefix=>({name:prefix+' / Native',conclusion:'success',steps:['Run CI','Record native execution receipt','Attest native receipt as immutable artifact'].map(name=>({name,conclusion:'success'}))});
+ const passedNative=prefix=>({name:prefix+' / Native',conclusion:'success',steps:['Run CI','Record native execution receipt','Attest native receipt as immutable artifact','Publish native proof index'].map(name=>({name,conclusion:'success'}))});
  let jobs=mode==='native-proof' ? [passedNative('proof-cold'),{name:'proof-cold / Mix',conclusion:'success'},{name:'proof-warm / Native',conclusion:'skipped'},{name:'proof-warm / Mix',conclusion:'success'},{name:'proof-warm / Verify prior result',conclusion:'success',steps:[{name:'Verify prior successful native job',conclusion:'success'}]}] : [passedNative(mode),{name:mode+' / Mix',conclusion:'success'}];
  if(mode!=='native-proof') for(const s of jobs[0].steps) if(s.name!=='Run CI')s.conclusion='skipped';
  jobs=jobs.map(j=>j.name===change.name?{...j,...change}:j);
@@ -211,3 +214,24 @@ async function qualifyFixture(mode='native-proof', change={}) {
 }
 for(const mode of ['native-proof','force-native','unqualified-runtime']) test(`fixture accepts intended boundary ${mode}`,async()=>await qualifyFixture(mode));
 for(const change of [{name:'proof-warm / Native',conclusion:'success'},{name:'proof-warm / Mix',conclusion:'skipped'},{name:'proof-warm / Verify prior result',conclusion:'failure'},{name:'proof-cold / Native',conclusion:'failure'}]) test(`fixture rejects incorrect boundary ${JSON.stringify(change)}`,async()=>await assert.rejects(()=>qualifyFixture('native-proof',change)));
+
+async function findIndex({artifacts, apiError, archiveError}={}) {
+ const name='elixir-proof-index-k'; const outputs={};const writes={};const calls=[];
+ const actions={listArtifactsForRepo:async args=>{calls.push(args);if(apiError)throw Error(apiError);return {data:{artifacts:artifacts??[{id:30,name,expired:false,workflow_run:{head_repository_id:1}}]}};},downloadArtifact:async args=>{calls.push(args);return {data:Buffer.from('zip')};}};
+ await new AsyncFunction('require','process','core','github','context',admissionSteps.find(s=>s.id==='proof-index').with.script)(
+ name=>name==='node:fs'?{writeFileSync:(path,value)=>writes[path]=value}:{execFileSync:()=>{if(archiveError)throw Error(archiveError);return JSON.stringify(validProof);}},
+ {env:{PROOF_FILE:'pointer.json',PROOF_KEY:'k'}},{setOutput:(k,v)=>outputs[k]=v,info:()=>{}},{rest:{actions}},{repo:{owner:'e0da',repo:'stack'},payload:{repository:{id:1}}});
+ return {outputs,writes,calls};
+}
+test('artifact index is a pointer lookup, not proof acceptance',async()=>{
+ const result=await findIndex();assert.equal(result.outputs.found,'true');
+ assert.deepEqual(result.calls[0],{owner:'e0da',repo:'stack',name:'elixir-proof-index-k',per_page:10});
+ assert.deepEqual(JSON.parse(result.writes['pointer.json']),validProof);
+ assert.equal(result.outputs.reused,undefined);
+});
+for(const artifacts of [[],[{id:1,name:'wrong',expired:false,workflow_run:{head_repository_id:1}}],[{id:1,name:'elixir-proof-index-k',expired:true,workflow_run:{head_repository_id:1}}],[{id:1,name:'elixir-proof-index-k',expired:false,workflow_run:{head_repository_id:2}}],[{id:1,name:'elixir-proof-index-k',expired:false}]]) test(`index absence/wrong identity remains native ${JSON.stringify(artifacts)}`,async()=>assert.equal((await findIndex({artifacts})).outputs.found,'false'));
+for(const failure of [{apiError:'403'},{archiveError:'invalid zip'}]) test(`index failure cannot export a hit ${JSON.stringify(failure)}`,async()=>await assert.rejects(()=>findIndex(failure)));
+test('newest active exact-key index is selected',async()=>{
+ const make=id=>({id,name:'elixir-proof-index-k',expired:false,workflow_run:{head_repository_id:1}});
+ const {calls}=await findIndex({artifacts:[make(10),make(30),make(20)]});assert.equal(calls[1].artifact_id,30);
+});

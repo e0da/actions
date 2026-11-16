@@ -259,9 +259,12 @@ all resolved inputs, target platform, configured immutable runtime identity and
 pinned workflow revision. The verifier requires a successful original native
 job with completed `Run CI`, receipt and immutable artifact upload steps. It
 binds the producer to the same repository, caller, checkout tree, static command
-inputs/defaults and pinned workflow. A cache entry is only a pointer to that
-API-verified native artifact. The native job independently recomputes its source
-and actual runtime identity before publishing evidence. Reused results never
+inputs/defaults and pinned workflow. An exact-key artifact index is only an
+untrusted pointer to that API-verified, job-specific native artifact. Discovery selects the newest active
+index from at most ten exact-name matches with the same source repository; the
+index cannot authorize reuse without the independent producer checks. The
+native job independently recomputes source and actual runtime identity before
+publishing evidence. Reused results never
 mint native receipts.
 
 Only exact downloaded OTP/Elixir toolchains qualify. Private-dependency jobs,
@@ -271,11 +274,12 @@ external-link checks, release proofs and live environment qualification are not
 eligible. Ruby with YAML/JSON and unzip are needed for hosted verification.
 
 Receipts contain identity metadata, not credentials or build outputs. The proof
-pointer uses `.git/elixir-native-proof.json` in each fresh checkout so its cache
-version does not depend on different hosted/native temporary-directory paths. An invalid
-pointer in an immutable cache key causes native execution until expiration or
-removal. GitHub cache scope may prevent reuse across PR refs. Source tests do
-not establish hosted latency, avoided queue time or consumer adoption; the
+pointer uses `.git/elixir-native-proof.json` in each fresh checkout. Immutable
+artifact transport avoids hosted/native cache compression-version differences
+and can discover proofs across PR refs. An absent or invalid index runs native.
+Index publication is optional and cannot fail otherwise successful native
+execution; successful job-specific attestation remains mandatory for reuse.
+Source tests do not establish hosted latency, avoided queue time or adoption; the
 hosted hit and native fallback paths require separate qualification.
 
 ### `ci-opentofu.yml` — OpenTofu repos
