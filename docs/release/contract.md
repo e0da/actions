@@ -58,3 +58,10 @@ URL and preserve the download-strategy argument. Public formulas retain the
 ordinary release download URL.
 
 For the first namespaced product tag, an absent derived previous version is treated as an initial release only when no other tag exists in that product namespace. An explicit missing baseline, or a missing baseline with existing product history, still fails.
+
+The private tap is cloned with direct Git process authentication after the hosted
+runner guard. Homebrew filters `GIT_CONFIG_*` and selects its own Git executable,
+so later operations use a repository-local credential helper with normal Git.
+The origin and helper contain no token value. The helper reads the job token only
+for HTTPS requests to the intended GitHub tap, including its exact repository
+path. Global Git configuration and public taps remain unchanged.

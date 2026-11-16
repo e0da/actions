@@ -52,7 +52,7 @@ from pathlib import Path
 import re
 workflow = Path('.github/workflows/release-homebrew-interface.yml').read_text()
 proof = workflow.split('  homebrew-proof:', 1)[1]
-assert proof.index('name: Require isolated Homebrew runner') < proof.index('name: Validate private tap token') < proof.index('brew tap')
+assert proof.index('name: Require isolated Homebrew runner') < proof.index('name: Validate private tap token') < proof.index('name: Configure private tap Git authentication') < proof.index('brew tap')
 for name in ['environment', 'os', 'arch']:
     assert f'RUNNER_{name.upper()}: ${{{{ runner.{name} }}}}' in proof.split('name: Validate private tap token', 1)[0]
 build = workflow.split('name: Install Homebrew build packages', 1)[1].split('name: Resolve destination release tag', 1)[0]

@@ -136,9 +136,9 @@ require_literal "$workflow" "if: \${{ !cancelled() && inputs.run-homebrew-proof 
 require_literal "$workflow" "CALLER_HOMEBREW_GITHUB_API_TOKEN:"
 require_literal "$workflow" "HOMEBREW_GITHUB_API_TOKEN secret is required for e0da/internal Homebrew proof."
 require_literal "$workflow" "HOMEBREW_GITHUB_API_TOKEN: \${{ inputs.homebrew-tap == 'e0da/internal' && secrets.HOMEBREW_GITHUB_API_TOKEN || '' }}"
-require_literal "$workflow" "GIT_CONFIG_COUNT: \${{ inputs.homebrew-tap == 'e0da/internal' && '1' || '0' }}"
-require_literal "$workflow" "GIT_CONFIG_KEY_0: \${{ inputs.homebrew-tap == 'e0da/internal' && format('url.https://x-access-token:{0}@github.com/.insteadOf', secrets.HOMEBREW_GITHUB_API_TOKEN) || '' }}"
-require_literal "$workflow" "GIT_CONFIG_VALUE_0: \${{ inputs.homebrew-tap == 'e0da/internal' && 'https://github.com/' || '' }}"
+require_literal "$workflow" "name: Configure private tap Git authentication"
+require_literal "$workflow" 'git clone -- https://github.com/e0da/homebrew-internal'
+reject_literal "$workflow" 'HOMEBREW_GIT='
 require_literal "$workflow" "brew tap \"\$HOMEBREW_TAP\""
 require_literal "$workflow" "brew fetch --force \"\$HOMEBREW_TAP/\$HOMEBREW_FORMULA\""
 require_literal "$workflow" "brew install \"\$HOMEBREW_TAP/\$HOMEBREW_FORMULA\""
@@ -160,52 +160,81 @@ cat > "$fixture_dir/home/.gitconfig" <<'EOF'
 EOF
 cp "$fixture_dir/home/.gitconfig" "$fixture_dir/gitconfig.before"
 
+cat > "$fixture_dir/bin/git" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "$1" = clone ]; then
+  [ "$2" = -- ] && [ "$3" = https://github.com/e0da/homebrew-internal ] || exit 90
+  [ "$(/usr/bin/git config --get url.https://x-access-token:fixture-token@github.com/.insteadOf)" = https://github.com/ ] || exit 91
+  [ "${MOCK_CLONE_EXIT:-0}" = 0 ] || exit "$MOCK_CLONE_EXIT"
+  exec /usr/bin/git init -q "$4"
+fi
+exec /usr/bin/git "$@"
+EOF
 cat > "$fixture_dir/bin/brew" <<'EOF'
 #!/bin/sh
 set -eu
-
+if [ "$1" = --repository ]; then
+  printf '%s\n' "$HOME/brew"
+  exit 0
+fi
 case "$MOCK_AUTH_MODE" in
   private)
-    [ "$HOMEBREW_GITHUB_API_TOKEN" = "fixture-token" ] || exit 80
-    [ "${GIT_CONFIG_COUNT:-}" = "1" ] || exit 81
-    [ "${GIT_CONFIG_VALUE_0:-}" = "https://github.com/" ] || exit 82
-    [ "$(git config --get user.name)" = "Existing Runner User" ] || exit 83
-    [ "$(git config --get "$GIT_CONFIG_KEY_0")" = "https://github.com/" ] || exit 84
+    [ -z "${GIT_CONFIG_COUNT:-}" ] || exit 81
+    [ -z "${HOMEBREW_GIT:-}" ] || exit 82
+    tap_dir="$HOME/brew/Library/Taps/e0da/homebrew-internal"
+    [ "$(/usr/bin/git -C "$tap_dir" config --get user.name)" = "Existing Runner User" ] || exit 83
+    [ "$(/usr/bin/git -C "$tap_dir" remote get-url origin)" = https://github.com/e0da/homebrew-internal ] || exit 84
+    result=$(printf 'protocol=https\nhost=github.com\npath=e0da/homebrew-internal\n\n' | /usr/bin/git -C "$tap_dir" credential fill)
+    printf '%s\n' "$result" | grep -q '^password=fixture-token$' || exit 85
+    for request in 'https github.com e0da/other' 'https example.com e0da/homebrew-internal' 'http github.com e0da/homebrew-internal'; do
+      set -- $request
+      if printf 'protocol=%s\nhost=%s\npath=%s\n\n' "$1" "$2" "$3" | /usr/bin/git -C "$tap_dir" credential fill >/dev/null 2>&1; then
+        exit 86
+      fi
+    done
+    if grep -q fixture-token "$tap_dir/.git/config"; then exit 87; fi
     ;;
   public)
-    [ -z "${HOMEBREW_GITHUB_API_TOKEN:-}" ] || exit 85
-    [ "${GIT_CONFIG_COUNT:-}" = "0" ] || exit 86
-    [ -z "${GIT_CONFIG_KEY_0:-}" ] || exit 87
-    [ -z "${GIT_CONFIG_VALUE_0:-}" ] || exit 89
+    [ -z "${HOMEBREW_GITHUB_API_TOKEN:-}" ] || exit 88
+    [ -z "${HOMEBREW_GIT:-}" ] || exit 89
     ;;
-  *) exit 88 ;;
+  *) exit 92 ;;
 esac
 exit "${MOCK_BREW_EXIT:-0}"
 EOF
-chmod +x "$fixture_dir/bin/brew"
+chmod +x "$fixture_dir/bin/brew" "$fixture_dir/bin/git"
+
+awk '/# homebrew-private-git:start/ { copying=1; next } /# homebrew-private-git:end/ { copying=0 } copying { sub(/^          /, ""); print }' "$workflow" > "$fixture_dir/setup-private-git.sh"
+[ -s "$fixture_dir/setup-private-git.sh" ] || fail "private Git setup block is required"
+setup_private() {
+  HOME="$fixture_dir/home" PATH="$fixture_dir/bin:/usr/bin:/bin" \
+    HOMEBREW_GITHUB_API_TOKEN=fixture-token HOMEBREW_TAP=e0da/internal \
+    sh -e "$fixture_dir/setup-private-git.sh"
+}
+
+HOME="$fixture_dir/home" PATH="$fixture_dir/bin:/usr/bin:/bin" HOMEBREW_TAP=e0da/beta \
+  sh -e "$fixture_dir/setup-private-git.sh"
+[ ! -e "$fixture_dir/home/brew" ] || fail "public setup must not create a private tap"
+if (MOCK_CLONE_EXIT=23; export MOCK_CLONE_EXIT; setup_private); then
+  fail "clone failure must stop credential setup"
+fi
+[ ! -e "$fixture_dir/home/brew/Library/Taps/e0da/homebrew-internal" ] || fail "failed clone must not configure a repository"
+setup_private
+# The mock clone above creates only a local repository; retain a token-free origin.
+/usr/bin/git -C "$fixture_dir/home/brew/Library/Taps/e0da/homebrew-internal" remote add origin https://github.com/e0da/homebrew-internal
 
 run_private_brew() {
   mock_exit="$1"
-  HOME="$fixture_dir/home" \
-    PATH="$fixture_dir/bin:$PATH" \
-    MOCK_BREW_EXIT="$mock_exit" \
-    MOCK_AUTH_MODE=private \
-    HOMEBREW_GITHUB_API_TOKEN=fixture-token \
-    GIT_CONFIG_COUNT=1 \
-    GIT_CONFIG_KEY_0="url.https://x-access-token:fixture-token@github.com/.insteadOf" \
-    GIT_CONFIG_VALUE_0="https://github.com/" \
-    brew tap e0da/internal
+  # Match Homebrew's filtered environment and use its normal system Git.
+  env -i HOME="$fixture_dir/home" PATH="$fixture_dir/bin:/usr/bin:/bin" \
+    GIT_TERMINAL_PROMPT=0 MOCK_BREW_EXIT="$mock_exit" MOCK_AUTH_MODE=private \
+    HOMEBREW_GITHUB_API_TOKEN=fixture-token brew tap e0da/internal
 }
 
 run_public_brew() {
-  HOME="$fixture_dir/home" \
-    PATH="$fixture_dir/bin:$PATH" \
-    MOCK_AUTH_MODE=public \
-    HOMEBREW_GITHUB_API_TOKEN='' \
-    GIT_CONFIG_COUNT=0 \
-    GIT_CONFIG_KEY_0='' \
-    GIT_CONFIG_VALUE_0='' \
-    brew tap e0da/beta
+  env -i HOME="$fixture_dir/home" PATH="$fixture_dir/bin:/usr/bin:/bin" \
+    MOCK_AUTH_MODE=public brew tap e0da/beta
 }
 
 run_public_brew || fail "public Homebrew command should run without injected credentials"
