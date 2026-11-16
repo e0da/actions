@@ -62,8 +62,10 @@ assert 'RUNNER_ENVIRONMENT: ${{ runner.environment }}' in build
 condition = re.search(r"^    if: (.+)$", proof, re.MULTILINE).group(1)
 condition = condition.removeprefix('${{').removesuffix('}}').strip()
 
-def eligible(build_result, publish_result, is_cancelled, run_proof=True):
+def eligible(build_result, publish_result, is_cancelled, run_proof=True, proof_only=False, publish_enabled=False):
     expression = condition.replace('inputs.run-homebrew-proof', 'run_proof')
+    expression = expression.replace('inputs.homebrew-proof-only', 'proof_only')
+    expression = expression.replace('inputs.publish-github-release', 'publish_enabled')
     expression = expression.replace('needs.release-interface.result', 'build_result')
     expression = expression.replace('needs.publish-github-release.result', 'publish_result')
     expression = expression.replace('cancelled()', 'is_cancelled')
@@ -82,6 +84,13 @@ assert not eligible('success', 'failure', False)
 assert not eligible('success', 'cancelled', False)
 assert not eligible('success', 'skipped', True)
 assert not eligible('success', 'skipped', False, False)
+assert eligible('skipped', 'skipped', False, proof_only=True)
+assert not eligible('skipped', 'skipped', False, proof_only=True, publish_enabled=True)
+assert not eligible('success', 'success', False, proof_only=True, publish_enabled=True)
+assert not eligible('skipped', 'skipped', False, run_proof=False, proof_only=True)
+assert not eligible('skipped', 'skipped', True, proof_only=True)
+assert not eligible('failure', 'skipped', False, proof_only=True)
+
 PY
 
 echo 'fleet-host Homebrew mutations rejected before tool invocation'

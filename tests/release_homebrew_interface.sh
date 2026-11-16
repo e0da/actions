@@ -174,7 +174,10 @@ EOF
 cat > "$fixture_dir/bin/brew" <<'EOF'
 #!/bin/sh
 set -eu
-if [ "$1" = --repository ]; then
+brew_operation=$1
+brew_arg2=${2:-}
+brew_arg3=${3:-}
+if [ "$brew_operation" = --repository ]; then
   printf '%s\n' "$HOME/brew"
   exit 0
 fi
@@ -201,6 +204,18 @@ case "$MOCK_AUTH_MODE" in
     ;;
   *) exit 92 ;;
 esac
+case "$brew_operation" in
+  trust)
+    [ "$brew_arg2" = --formula ] && [ "$brew_arg3" = "$HOMEBREW_TAP/$HOMEBREW_FORMULA" ] || exit 93
+    printf '%s\n' "$brew_arg3" > "$HOME/trusted-formula"
+    ;;
+  fetch)
+    if [ ! -f "$HOME/trusted-formula" ] || [ "$(cat "$HOME/trusted-formula")" != "$HOMEBREW_TAP/$HOMEBREW_FORMULA" ]; then
+      echo 'fresh formula must be explicitly trusted before fetch' >&2
+      exit 94
+    fi
+    ;;
+esac
 exit "${MOCK_BREW_EXIT:-0}"
 EOF
 chmod +x "$fixture_dir/bin/brew" "$fixture_dir/bin/git"
@@ -224,17 +239,22 @@ setup_private
 # The mock clone above creates only a local repository; retain a token-free origin.
 /usr/bin/git -C "$fixture_dir/home/brew/Library/Taps/e0da/homebrew-internal" remote add origin https://github.com/e0da/homebrew-internal
 
+awk '/# homebrew-fetch:start/ { copying=1; next } /# homebrew-fetch:end/ { copying=0 } copying { sub(/^          /, ""); print }' "$workflow" > "$fixture_dir/tap-fetch.sh"
+[ -s "$fixture_dir/tap-fetch.sh" ] || fail "tap/fetch block is required"
+
 run_private_brew() {
   mock_exit="$1"
   # Match Homebrew's filtered environment and use its normal system Git.
   env -i HOME="$fixture_dir/home" PATH="$fixture_dir/bin:/usr/bin:/bin" \
     GIT_TERMINAL_PROMPT=0 MOCK_BREW_EXIT="$mock_exit" MOCK_AUTH_MODE=private \
-    HOMEBREW_GITHUB_API_TOKEN=fixture-token brew tap e0da/internal
+    HOMEBREW_GITHUB_API_TOKEN=fixture-token HOMEBREW_TAP=e0da/internal HOMEBREW_FORMULA=mcog \
+    sh -e "$fixture_dir/tap-fetch.sh"
 }
 
 run_public_brew() {
   env -i HOME="$fixture_dir/home" PATH="$fixture_dir/bin:/usr/bin:/bin" \
-    MOCK_AUTH_MODE=public brew tap e0da/beta
+    MOCK_AUTH_MODE=public HOMEBREW_TAP=e0da/beta HOMEBREW_FORMULA=mozak \
+    sh -e "$fixture_dir/tap-fetch.sh"
 }
 
 run_public_brew || fail "public Homebrew command should run without injected credentials"

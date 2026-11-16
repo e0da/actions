@@ -820,8 +820,10 @@ jobs:
         shell: sh
         run: |
           set -eu
+          # homebrew-fetch:start
           brew tap "$HOMEBREW_TAP"
           brew fetch --force "$HOMEBREW_TAP/$HOMEBREW_FORMULA"
+          # homebrew-fetch:end
 
       - name: Install formula
         shell: sh
