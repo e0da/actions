@@ -237,7 +237,14 @@ Existing `ci-elixir.yml` callers keep their permission and execution contract.
 
 Pin the verified workflow to one exact commit SHA in the direct caller and set
 `result-reuse-environment` to the immutable runner image reference, including
-`@sha256:…`. The owner must update that identity when the actual runtime changes.
+`@sha256:…`. The provider must expose `E0DA_RUNNER_IMAGE_REF` from the same
+pinned value that renders `container.image`; missing or unequal values run native
+checks and cannot create proof. The configured runtime ref is included in the
+key and immutable receipt. This protects rollout coherence, not independent
+runtime attestation: job env and root-writable files can be forged. Actual
+fixture placement/image ID qualification uses an external observer bound to
+both assigned runners. Consumers remain off until the provider seam is reviewed,
+deployed by its owner, and qualified.
 Only exact downloaded OTP/Elixir versions qualify. The image must provide Ruby
 with YAML/JSON and unzip for proof verification. Private-dependency jobs always
 execute. Use this only for commands whose inputs are the checkout tree and this
