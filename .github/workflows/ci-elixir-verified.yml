@@ -65,14 +65,157 @@ on:
         required: false
         type: string
         default: setup-beam
+      result-reuse-platform:
+        description: "Explicit native target identity for reuse: Linux-ARM64 or Linux-X64. Empty executes native."
+        required: false
+        type: string
+        default: ""
+      force-native:
+        description: "Execute the native contract even when a prior result exists."
+        required: false
+        type: boolean
+        default: false
     secrets:
       private_deps_ssh_key:
         description: "Optional SSH private key for fetching private cross-repo git deps. When unset, the SSH-config step is skipped and behavior is unchanged."
         required: false
 
 jobs:
-  mix:
-    name: Mix
+  admission:
+    name: Verify prior result
+    if: inputs.result-reuse-environment != '' && inputs.result-reuse-platform != '' && !inputs.force-native
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      PRIVATE_DEPS_PRESENT: ${{ secrets.private_deps_ssh_key != '' }}
+    outputs:
+      reused: ${{ steps.checkout.outcome == 'success' && steps.proof-key.outcome == 'success' && steps.proof-cache.outcome == 'success' && steps.proof.outcome == 'success' && steps.proof.outputs.reused == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+        id: checkout
+        continue-on-error: true
+
+      - name: Identify tested tree and execution contract
+        continue-on-error: true
+        id: proof-key
+        if: inputs.result-reuse-environment != '' && env.PRIVATE_DEPS_PRESENT == 'false'
+        uses: actions/github-script@v8
+        env:
+          REUSE_INPUTS: ${{ toJSON(inputs) }}
+          CALLER_WORKFLOW: ${{ github.workflow_ref }}
+          PROOF_PLATFORM: ${{ inputs.result-reuse-platform }}
+        with:
+          script: |
+            const {execFileSync} = require('node:child_process');
+            const {createHash} = require('node:crypto');
+            const policy = JSON.parse(process.env.REUSE_INPUTS);
+            const target = policy['result-reuse-platform'];
+            if (policy['force-native'] || !['Linux-ARM64', 'Linux-X64'].includes(target)) {
+              core.info('Native execution required: reuse target is absent, unsupported or forced native');
+              return;
+            }
+            const runtime = policy['result-reuse-environment'];
+            if (policy['beam-mode'] !== 'setup-beam' || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(policy['otp-version']) || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(policy['elixir-version']) || !/@sha256:[0-9a-f]{64}$/.test(policy['result-reuse-environment'])) {
+              core.info('Native execution required: exact downloaded toolchains and immutable runtime are not declared');
+              return;
+            }
+            const workflowPath = process.env.CALLER_WORKFLOW.split('@')[0].split('/').slice(2).join('/');
+            const caller = execFileSync('git', ['show', `HEAD:${workflowPath}`], {encoding: 'utf8'});
+            const refs = [...caller.matchAll(/uses:\s*e0da\/actions\/\.github\/workflows\/ci-elixir-verified\.yml@([^\s#]+)/g)].map(m => m[1]);
+            if (!refs.length || refs.some(ref => !/^[0-9a-f]{40}$/.test(ref)) || new Set(refs).size !== 1) {
+              core.info('Native execution required: direct caller does not pin one immutable producer revision');
+              return;
+            }
+            const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {encoding: 'utf8'}).trim();
+            const key = 'elixir-proof-v5-' + createHash('sha256').update(JSON.stringify({tree, runtime, caller: workflowPath, inputs: process.env.REUSE_INPUTS, platform: process.env.PROOF_PLATFORM, workflow: refs[0]})).digest('hex');
+            core.setOutput('key', key);
+            core.setOutput('tree', tree);
+            core.setOutput('checkout', execFileSync('git', ['rev-parse', 'HEAD'], {encoding: 'utf8'}).trim());
+            core.setOutput('workflow', workflowPath);
+            core.setOutput('revision', refs[0]);
+            core.setOutput('runtime', runtime);
+
+      - name: Restore prior native proof
+        continue-on-error: true
+        id: proof-cache
+        if: steps.proof-key.outputs.key != ''
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/elixir-native-proof.json
+          key: ${{ steps.proof-key.outputs.key }}
+
+      - name: Verify prior successful native job
+        continue-on-error: true
+        id: proof
+        if: steps.proof-cache.outputs.cache-hit == 'true'
+        uses: actions/github-script@v8
+        env:
+          PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
+          PROOF_KEY: ${{ steps.proof-key.outputs.key }}
+          PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
+          PROOF_RUNTIME: ${{ steps.proof-key.outputs.runtime }}
+          PROOF_WORKFLOW: ${{ steps.proof-key.outputs.workflow }}
+          PROOF_REVISION: ${{ steps.proof-key.outputs.revision }}
+          PROOF_DEFAULTS: '{"runner":"ubuntu-latest","otp-version":"28","elixir-version":"1.19.5","deps-command":"mix deps.get --only test","ci-command":"mix ci","cache-mode":"read-write","cache-paths":"deps\n_build\n","cache-lock-files":"mix.lock","toolchain-cache-mode":"off","toolchain-cache-salt":"","result-reuse-environment":"","beam-mode":"setup-beam","result-reuse-platform":"","force-native":false}'
+          REUSE_INPUTS: ${{ toJSON(inputs) }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const {execFileSync} = require('node:child_process');
+            const proof = JSON.parse(fs.readFileSync(process.env.PROOF_FILE, 'utf8'));
+            const reject = async reason => {
+              core.setOutput('reused', 'false');
+              core.info(`Native execution required: ${reason}`);
+              await core.summary.addRaw(`Native execution required: ${reason}`).write();
+            };
+            if (proof.key !== process.env.PROOF_KEY || proof.tree !== process.env.PROOF_TREE || proof.repository !== `${context.repo.owner}/${context.repo.repo}` || proof.runtime !== process.env.PROOF_RUNTIME) return reject('receipt identity mismatch');
+            const {data: job} = await github.rest.actions.getJobForWorkflowRun({...context.repo, job_id: proof.job_id});
+            if (job.run_id !== proof.run_id || job.status !== 'completed' || job.conclusion !== 'success' || !job.steps.some(step => step.name === 'Run CI' && step.status === 'completed' && step.conclusion === 'success')) return reject('prior native job not successful');
+            if (!['Record native execution receipt', 'Attest native receipt as immutable artifact'].every(name => job.steps.some(step => step.name === name && step.status === 'completed' && step.conclusion === 'success'))) return reject('native producer did not record and attest this execution');
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: proof.run_id});
+            if (run.path !== process.env.PROOF_WORKFLOW || proof.workflow !== process.env.PROOF_WORKFLOW || job.head_sha !== run.head_sha) return reject('prior workflow identity mismatch');
+            const {data: commit} = await github.rest.git.getCommit({...context.repo, commit_sha: proof.checkout});
+            if (commit.tree.sha !== process.env.PROOF_TREE) return reject('prior checkout tree mismatch');
+            if (run.event === 'pull_request') {
+              const pr = run.pull_requests.find(pr => pr.head.sha === run.head_sha);
+              if (!pr || commit.parents.length !== 2 || commit.parents[0].sha !== pr.base.sha || commit.parents[1].sha !== pr.head.sha) return reject('prior merge checkout not bound to run head/base');
+            } else if (proof.checkout !== run.head_sha) return reject('prior checkout not bound to run head');
+            const parseYaml = text => JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'puts JSON.generate(YAML.safe_load($stdin.read, aliases: true))'], {input: text, encoding: 'utf8'}));
+            const caller = parseYaml(execFileSync('git', ['show', `HEAD:${process.env.PROOF_WORKFLOW}`], {encoding: 'utf8'}));
+            const producerRef = `e0da/actions/.github/workflows/ci-elixir-verified.yml@${process.env.PROOF_REVISION}`;
+            if (Object.values(caller.jobs).some(call => typeof call.name === 'string' && call.name.includes('$' + '{{'))) return reject('dynamic job names are not statically bound');
+            const candidates = Object.entries(caller.jobs).filter(([id, call]) => call.uses ? job.name.startsWith(`${call.name || id} / `) : job.name === (call.name || id));
+            if (candidates.length !== 1) return reject('API job is not a unique caller job');
+            const [id, call] = candidates[0];
+            if (call.strategy || job.name !== `${call.name || id} / Native` || call.uses !== producerRef) return reject('API job is not the pinned native producer');
+            const provided = call.with || {};
+            if (Object.entries(provided).some(([name, value]) => name === 'force-native' ? typeof value !== 'boolean' : typeof value !== 'string' || value.includes('$' + '{{'))) return reject('producer inputs are not statically bound');
+            const expected = JSON.parse(process.env.PROOF_DEFAULTS);
+            if (Object.keys(provided).some(name => !Object.hasOwn(expected, name))) return reject('undeclared native producer input');
+            Object.assign(expected, provided);
+            const actual = JSON.parse(process.env.REUSE_INPUTS);
+            if (Object.entries(expected).some(([name, value]) => actual[name] !== value)) return reject('native producer commands or inputs differ');
+            const name = `elixir-native-${proof.job_id}-${proof.key}`;
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {...context.repo, run_id: proof.run_id, per_page: 100});
+            const matches = artifacts.filter(a => a.name === name && !a.expired);
+            if (matches.length !== 1) return reject('immutable native artifact absent');
+            const {data: zip} = await github.rest.actions.downloadArtifact({...context.repo, artifact_id: matches[0].id, archive_format: 'zip'});
+            const archive = process.env.PROOF_FILE + '.zip';
+            fs.writeFileSync(archive, Buffer.from(zip));
+            const native = JSON.parse(execFileSync('unzip', ['-p', archive, 'elixir-native-proof.json'], {encoding: 'utf8'}));
+            for (const field of ['key', 'tree', 'runtime', 'repository', 'workflow', 'checkout', 'run_id', 'job_id']) {
+              if (native[field] !== proof[field]) return reject('artifact does not attest cached pointer');
+            }
+            core.setOutput('reused', 'true');
+            core.info(`Reused native proof: ${job.html_url}; tree ${proof.tree}; immutable artifact ${matches[0].id}`);
+            await core.summary.addRaw(`Reused native proof: ${job.html_url}; tree ${proof.tree}; immutable artifact ${matches[0].id}`).write();
+
+  native:
+    name: Native
+    needs: admission
+    if: always() && !cancelled() && !(needs.admission.result == 'success' && needs.admission.outputs.reused == 'true')
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -127,22 +270,29 @@ jobs:
             const {execFileSync} = require('node:child_process');
             const {createHash} = require('node:crypto');
             const policy = JSON.parse(process.env.REUSE_INPUTS);
+            const target = policy['result-reuse-platform'];
+            if (policy['force-native'] || !['Linux-ARM64', 'Linux-X64'].includes(target)) {
+              core.info('Native execution required: reuse target is absent, unsupported or forced native');
+              return;
+            }
             const runtime = process.env.E0DA_RUNNER_IMAGE_REF;
-            if (!runtime || runtime !== policy['result-reuse-environment']) {
+            if (!runtime || runtime !== policy['result-reuse-environment'] || process.env.PROOF_PLATFORM !== target) {
               core.info('Native execution required: configured runner image ref is missing or mismatched');
               return;
             }
             if (policy['beam-mode'] !== 'setup-beam' || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(policy['otp-version']) || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(policy['elixir-version']) || !/@sha256:[0-9a-f]{64}$/.test(policy['result-reuse-environment'])) {
-              throw new Error('Result reuse requires exact downloaded toolchains and an immutable runtime image digest');
+              core.info('Native execution required: exact downloaded toolchains and immutable runtime are not declared');
+              return;
             }
             const workflowPath = process.env.CALLER_WORKFLOW.split('@')[0].split('/').slice(2).join('/');
             const caller = execFileSync('git', ['show', `HEAD:${workflowPath}`], {encoding: 'utf8'});
             const refs = [...caller.matchAll(/uses:\s*e0da\/actions\/\.github\/workflows\/ci-elixir-verified\.yml@([^\s#]+)/g)].map(m => m[1]);
             if (!refs.length || refs.some(ref => !/^[0-9a-f]{40}$/.test(ref)) || new Set(refs).size !== 1) {
-              throw new Error('Result reuse requires one immutable ci-elixir-verified workflow revision in the direct caller');
+              core.info('Native execution required: direct caller does not pin one immutable producer revision');
+              return;
             }
             const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {encoding: 'utf8'}).trim();
-            const key = 'elixir-proof-v4-' + createHash('sha256').update(JSON.stringify({tree, runtime, caller: workflowPath, inputs: process.env.REUSE_INPUTS, platform: process.env.PROOF_PLATFORM, workflow: refs[0]})).digest('hex');
+            const key = 'elixir-proof-v5-' + createHash('sha256').update(JSON.stringify({tree, runtime, caller: workflowPath, inputs: process.env.REUSE_INPUTS, platform: process.env.PROOF_PLATFORM, workflow: refs[0]})).digest('hex');
             core.setOutput('key', key);
             core.setOutput('tree', tree);
             core.setOutput('checkout', execFileSync('git', ['rev-parse', 'HEAD'], {encoding: 'utf8'}).trim());
@@ -150,82 +300,9 @@ jobs:
             core.setOutput('revision', refs[0]);
             core.setOutput('runtime', runtime);
 
-      - name: Restore prior native proof
-        id: proof-cache
-        if: steps.proof-key.outputs.key != ''
-        uses: actions/cache/restore@v5
-        with:
-          path: ${{ runner.temp }}/elixir-native-proof.json
-          key: ${{ steps.proof-key.outputs.key }}
-
-      - name: Verify prior successful native job
-        id: proof
-        if: steps.proof-cache.outputs.cache-hit == 'true'
-        uses: actions/github-script@v8
-        env:
-          PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
-          PROOF_KEY: ${{ steps.proof-key.outputs.key }}
-          PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
-          PROOF_RUNTIME: ${{ steps.proof-key.outputs.runtime }}
-          PROOF_WORKFLOW: ${{ steps.proof-key.outputs.workflow }}
-          PROOF_REVISION: ${{ steps.proof-key.outputs.revision }}
-          PROOF_DEFAULTS: '{"runner":"ubuntu-latest","otp-version":"28","elixir-version":"1.19.5","deps-command":"mix deps.get --only test","ci-command":"mix ci","cache-mode":"read-write","cache-paths":"deps\n_build\n","cache-lock-files":"mix.lock","toolchain-cache-mode":"off","toolchain-cache-salt":"","result-reuse-environment":"","beam-mode":"setup-beam"}'
-          REUSE_INPUTS: ${{ toJSON(inputs) }}
-        with:
-          script: |
-            const fs = require('node:fs');
-            const {execFileSync} = require('node:child_process');
-            const proof = JSON.parse(fs.readFileSync(process.env.PROOF_FILE, 'utf8'));
-            const reject = async reason => {
-              core.setOutput('reused', 'false');
-              core.info(`Native execution required: ${reason}`);
-              await core.summary.addRaw(`Native execution required: ${reason}`).write();
-            };
-            if (proof.key !== process.env.PROOF_KEY || proof.tree !== process.env.PROOF_TREE || proof.repository !== `${context.repo.owner}/${context.repo.repo}` || proof.runtime !== process.env.PROOF_RUNTIME) return reject('receipt identity mismatch');
-            const {data: job} = await github.rest.actions.getJobForWorkflowRun({...context.repo, job_id: proof.job_id});
-            if (job.run_id !== proof.run_id || job.status !== 'completed' || job.conclusion !== 'success' || !job.steps.some(step => step.name === 'Run CI' && step.status === 'completed' && step.conclusion === 'success')) return reject('prior native job not successful');
-            if (!['Record native execution receipt', 'Attest native receipt as immutable artifact'].every(name => job.steps.some(step => step.name === name && step.status === 'completed' && step.conclusion === 'success'))) return reject('native producer did not record and attest this execution');
-            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: proof.run_id});
-            if (run.path !== process.env.PROOF_WORKFLOW || proof.workflow !== process.env.PROOF_WORKFLOW || job.head_sha !== run.head_sha) return reject('prior workflow identity mismatch');
-            const {data: commit} = await github.rest.git.getCommit({...context.repo, commit_sha: proof.checkout});
-            if (commit.tree.sha !== process.env.PROOF_TREE) return reject('prior checkout tree mismatch');
-            if (run.event === 'pull_request') {
-              const pr = run.pull_requests.find(pr => pr.head.sha === run.head_sha);
-              if (!pr || commit.parents.length !== 2 || commit.parents[0].sha !== pr.base.sha || commit.parents[1].sha !== pr.head.sha) return reject('prior merge checkout not bound to run head/base');
-            } else if (proof.checkout !== run.head_sha) return reject('prior checkout not bound to run head');
-            const parseYaml = text => JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'puts JSON.generate(YAML.safe_load($stdin.read, aliases: true))'], {input: text, encoding: 'utf8'}));
-            const caller = parseYaml(execFileSync('git', ['show', `HEAD:${process.env.PROOF_WORKFLOW}`], {encoding: 'utf8'}));
-            const producerRef = `e0da/actions/.github/workflows/ci-elixir-verified.yml@${process.env.PROOF_REVISION}`;
-            if (Object.values(caller.jobs).some(call => typeof call.name === 'string' && call.name.includes('$' + '{{'))) return reject('dynamic job names are not statically bound');
-            const candidates = Object.entries(caller.jobs).filter(([id, call]) => call.uses ? job.name.startsWith(`${call.name || id} / `) : job.name === (call.name || id));
-            if (candidates.length !== 1) return reject('API job is not a unique caller job');
-            const [id, call] = candidates[0];
-            if (call.strategy || job.name !== `${call.name || id} / Mix` || call.uses !== producerRef) return reject('API job is not the pinned native producer');
-            const provided = call.with || {};
-            if (Object.values(provided).some(value => typeof value !== 'string' || value.includes('$' + '{{'))) return reject('producer inputs are not statically bound');
-            const expected = JSON.parse(process.env.PROOF_DEFAULTS);
-            if (Object.keys(provided).some(name => !Object.hasOwn(expected, name))) return reject('undeclared native producer input');
-            Object.assign(expected, provided);
-            const actual = JSON.parse(process.env.REUSE_INPUTS);
-            if (Object.entries(expected).some(([name, value]) => actual[name] !== value)) return reject('native producer commands or inputs differ');
-            const name = `elixir-native-${proof.job_id}-${proof.key}`;
-            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {...context.repo, run_id: proof.run_id, per_page: 100});
-            const matches = artifacts.filter(a => a.name === name && !a.expired);
-            if (matches.length !== 1) return reject('immutable native artifact absent');
-            const {data: zip} = await github.rest.actions.downloadArtifact({...context.repo, artifact_id: matches[0].id, archive_format: 'zip'});
-            const archive = process.env.PROOF_FILE + '.zip';
-            fs.writeFileSync(archive, Buffer.from(zip));
-            const native = JSON.parse(execFileSync('unzip', ['-p', archive, 'elixir-native-proof.json'], {encoding: 'utf8'}));
-            for (const field of ['key', 'tree', 'runtime', 'repository', 'workflow', 'checkout', 'run_id', 'job_id']) {
-              if (native[field] !== proof[field]) return reject('artifact does not attest cached pointer');
-            }
-            core.setOutput('reused', 'true');
-            core.info(`Reused native proof: ${job.html_url}; tree ${proof.tree}; immutable artifact ${matches[0].id}`);
-            await core.summary.addRaw(`Reused native proof: ${job.html_url}; tree ${proof.tree}; immutable artifact ${matches[0].id}`).write();
-
       - name: Identify immutable toolchain cache
         id: beam-platform
-        if: steps.proof.outputs.reused != 'true' && (inputs.beam-mode == 'setup-beam' && inputs.toolchain-cache-mode == 'read-write')
+        if: (inputs.beam-mode == 'setup-beam' && inputs.toolchain-cache-mode == 'read-write')
         env:
           OTP_VERSION: ${{ inputs.otp-version }}
           ELIXIR_VERSION: ${{ inputs.elixir-version }}
@@ -248,7 +325,7 @@ jobs:
 
       - name: Cache downloaded BEAM tools
         id: beam-download-cache
-        if: steps.proof.outputs.reused != 'true' && (inputs.beam-mode == 'setup-beam' && inputs.toolchain-cache-mode == 'read-write')
+        if: (inputs.beam-mode == 'setup-beam' && inputs.toolchain-cache-mode == 'read-write')
         uses: actions/cache@v5
         with:
           path: |
@@ -257,7 +334,7 @@ jobs:
           key: beam-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.beam-platform.outputs.identity }}-54075bcc5e249e4758d363f27d099f55d843f124-${{ inputs.otp-version }}-${{ inputs.elixir-version }}-${{ inputs.toolchain-cache-salt }}
 
       - name: Set up BEAM
-        if: steps.proof.outputs.reused != 'true' && (inputs.beam-mode == 'setup-beam')
+        if: (inputs.beam-mode == 'setup-beam')
         uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         with:
           version-type: ${{ inputs.toolchain-cache-mode == 'read-write' && 'strict' || 'loose' }}
@@ -265,7 +342,7 @@ jobs:
           elixir-version: ${{ inputs.elixir-version }}
 
       - name: Verify preinstalled BEAM
-        if: steps.proof.outputs.reused != 'true' && (inputs.beam-mode == 'runner-preinstalled')
+        if: (inputs.beam-mode == 'runner-preinstalled')
         run: |
           set -eu
 
@@ -279,7 +356,7 @@ jobs:
 
       - name: Cache Mix deps
         id: mix-cache
-        if: steps.proof.outputs.reused != 'true' && (inputs.cache-mode == 'read-write')
+        if: (inputs.cache-mode == 'read-write')
         uses: actions/cache@v5
         with:
           path: ${{ inputs.cache-paths }}
@@ -339,7 +416,7 @@ jobs:
           fi
 
       - name: Configure private git deps (SSH)
-        if: steps.proof.outputs.reused != 'true' && (env.PRIVATE_DEPS_SSH_KEY != '')
+        if: (env.PRIVATE_DEPS_SSH_KEY != '')
         env:
           SSH_KEY: ${{ secrets.private_deps_ssh_key }}
         run: |
@@ -351,18 +428,16 @@ jobs:
           printf 'Host github.com\n  IdentityFile ~/.ssh/private_deps\n  IdentitiesOnly yes\n' >> ~/.ssh/config
 
       - name: Install deps
-        if: steps.proof.outputs.reused != 'true'
         run: ${{ inputs.deps-command }}
 
       - name: Run CI
-        if: steps.proof.outputs.reused != 'true'
         env:
           BEAM_DOWNLOAD_CACHE_HIT: ${{ steps.beam-download-cache.outputs.cache-hit }}
         run: ${{ inputs.ci-command }}
 
       - name: Record native execution receipt
         id: native-receipt
-        if: steps.proof-key.outputs.key != '' && steps.proof.outputs.reused != 'true' && steps.proof-cache.outputs.cache-hit != 'true'
+        if: steps.proof-key.outputs.key != ''
         uses: actions/github-script@v8
         env:
           PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
@@ -392,8 +467,31 @@ jobs:
           overwrite: false
 
       - name: Save native execution receipt
-        if: steps.proof-key.outputs.key != '' && steps.proof.outputs.reused != 'true' && steps.proof-cache.outputs.cache-hit != 'true'
+        if: steps.proof-key.outputs.key != ''
         uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}/elixir-native-proof.json
           key: ${{ steps.proof-key.outputs.key }}
+
+  mix:
+    name: Mix
+    needs: [admission, native]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require verified result or successful native execution
+        env:
+          ADMISSION_RESULT: ${{ needs.admission.result }}
+          VERIFIED_HIT: ${{ needs.admission.outputs.reused }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          set -eu
+          if [ "$NATIVE_RESULT" = success ]; then
+            echo "Native execution passed"
+          elif [ "$ADMISSION_RESULT" = success ] && [ "$VERIFIED_HIT" = true ] && [ "$NATIVE_RESULT" = skipped ]; then
+            echo "Verified prior native execution"
+          else
+            echo "::error::Neither a verified prior result nor successful native execution"
+            exit 1
+          fi
