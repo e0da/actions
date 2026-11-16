@@ -10,7 +10,7 @@ const steps = workflow.jobs.mix.steps;
 const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 function script(name) { return steps.find(s => s.name === name).with.script; }
 const validProof = {key:'k', tree:'t', repository:'e0da/stack', workflow:'.github/workflows/mcog.yml', checkout:'merge', run_id:10, job_id:20};
-async function verify({proof = {...validProof}, job = {run_id:10, name:'mcog / Mix', head_sha:'head', status:'completed', conclusion:'success', steps:[{name:'Run CI', status:'completed', conclusion:'success'}], html_url:'proof-url'}, run = {head_sha:'head', path:'.github/workflows/mcog.yml', event:'pull_request', pull_requests:[{head:{sha:'head'},base:{sha:'base'}}]}, commit = {tree:{sha:'t'},parents:[{sha:'base'},{sha:'head'}]}, native = {...validProof}, artifacts, apiError, caller = {jobs:{mcog:{uses:producerRef,with:actualInputs}}}} = {}) {
+async function verify({proof = {...validProof}, job = {run_id:10, name:'mcog / Mix', head_sha:'head', status:'completed', conclusion:'success', steps:['Run CI','Record native execution receipt','Attest native receipt as immutable artifact'].map(name=>({name,status:'completed',conclusion:'success'})), html_url:'proof-url'}, run = {head_sha:'head', path:'.github/workflows/mcog.yml', event:'pull_request', pull_requests:[{head:{sha:'head'},base:{sha:'base'}}]}, commit = {tree:{sha:'t'},parents:[{sha:'base'},{sha:'head'}]}, native = {...validProof}, artifacts, apiError, caller = {jobs:{mcog:{uses:producerRef,with:actualInputs}}}} = {}) {
   const outputs = {};
   const core = {setOutput:(k,v)=>outputs[k]=v, summary:{addRaw:()=>({write:async()=>{}})}};
   const fs = {readFileSync:()=>JSON.stringify(proof),writeFileSync:()=>{}};
@@ -89,3 +89,5 @@ test('an inline job cannot impersonate the native producer display name',async()
 test('dynamic caller names cannot authorize proof',async()=>assert.equal(await verify({caller:{jobs:{mcog:{uses:producerRef,with:actualInputs},other:{name:'${{ inputs.name }}',steps:[]}}}}),'false'));
 
 test('producer defaults binding stays identical to workflow input schema',()=>assert.deepEqual(JSON.parse(steps.find(s=>s.id==='proof').env.PROOF_DEFAULTS),Object.fromEntries(Object.entries(schema).map(([k,v])=>[k,v.default]))));
+
+for(const name of ['Record native execution receipt','Attest native receipt as immutable artifact']) test(`skipped producer ${name} cannot attest native execution`,async()=>assert.equal(await verify({job:{run_id:10,head_sha:'head',name:'mcog / Mix',status:'completed',conclusion:'success',steps:['Run CI','Record native execution receipt','Attest native receipt as immutable artifact'].map(n=>({name:n,status:'completed',conclusion:n===name?'skipped':'success'}))}}),'false'));

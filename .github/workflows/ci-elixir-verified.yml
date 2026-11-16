@@ -176,6 +176,7 @@ jobs:
             if (proof.key !== process.env.PROOF_KEY || proof.tree !== process.env.PROOF_TREE || proof.repository !== `${context.repo.owner}/${context.repo.repo}`) return reject('receipt identity mismatch');
             const {data: job} = await github.rest.actions.getJobForWorkflowRun({...context.repo, job_id: proof.job_id});
             if (job.run_id !== proof.run_id || job.status !== 'completed' || job.conclusion !== 'success' || !job.steps.some(step => step.name === 'Run CI' && step.status === 'completed' && step.conclusion === 'success')) return reject('prior native job not successful');
+            if (!['Record native execution receipt', 'Attest native receipt as immutable artifact'].every(name => job.steps.some(step => step.name === name && step.status === 'completed' && step.conclusion === 'success'))) return reject('native producer did not record and attest this execution');
             const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: proof.run_id});
             if (run.path !== process.env.PROOF_WORKFLOW || proof.workflow !== process.env.PROOF_WORKFLOW || job.head_sha !== run.head_sha) return reject('prior workflow identity mismatch');
             const {data: commit} = await github.rest.git.getCommit({...context.repo, commit_sha: proof.checkout});
