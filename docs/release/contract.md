@@ -22,6 +22,19 @@ and configured access scope.
 The reusable workflow is the enforcement owner. Its contract tests must cover
 every required behavior in this document.
 
+Homebrew mutation requires a disposable GitHub-hosted runner. Installed proof
+rejects self-hosted runners before tapping, fetching, uninstalling, installing,
+testing, or running the caller's smoke command. Build-package installation also
+rejects self-hosted runners when packages are requested; fleet builds use tools
+provisioned outside CI. An empty package list performs no Homebrew operations.
+
+Disposable self-hosted macOS guests remain denied until the runner provider
+supplies authenticated, job-bound isolation evidence and the workflow validates
+it. A runner label, alternate prefix, environment flag, or guest-local file does
+not establish that boundary. The provider owns guest-only credentials, no host
+Homebrew/home writable mounts, bounded teardown, and authoritative disposal
+evidence. This guard does not claim that provider is implemented.
+
 Monorepo callers set `source-tag-prefix` to their product namespace, such as
 `mcog/`, for source tags like `mcog/v0.1.0`. The workflow removes that prefix
 for the formula version and destination tag, while source release notes and

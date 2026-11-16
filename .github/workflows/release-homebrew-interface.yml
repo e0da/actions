@@ -9,7 +9,7 @@ on:
         type: string
         default: macos-14
       install-runner:
-        description: "Runner for Homebrew installed proof."
+        description: "Disposable runner for Homebrew installed proof; self-hosted runners are denied until guest isolation is attested."
         required: false
         type: string
         default: macos-14
@@ -59,7 +59,7 @@ on:
         type: string
         default: ""
       homebrew-build-packages:
-        description: "Optional newline-delimited Homebrew packages required before build/test."
+        description: "Homebrew build packages to install on a GitHub-hosted runner; self-hosted builds require preinstalled tools."
         required: false
         type: string
         default: ""
@@ -196,9 +196,16 @@ jobs:
         shell: sh
         env:
           HOMEBREW_BUILD_PACKAGES: ${{ inputs.homebrew-build-packages }}
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
           set -eu
+          # homebrew-build-isolation:start
           [ -n "$HOMEBREW_BUILD_PACKAGES" ] || exit 0
+          if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ]; then
+            echo "Homebrew build-package installation requires a disposable GitHub-hosted runner; provision fleet tools outside CI." >&2
+            exit 1
+          fi
+          # homebrew-build-isolation:end
           if ! command -v brew >/dev/null 2>&1; then
             echo "homebrew-build-packages requires brew on the selected runner." >&2
             exit 1
@@ -752,6 +759,19 @@ jobs:
       INSTALLED_SMOKE_COMMAND: ${{ inputs.installed-smoke-command }}
 
     steps:
+      - name: Require isolated Homebrew runner
+        shell: sh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          set -eu
+          # homebrew-proof-isolation:start
+          if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ]; then
+            echo "Homebrew installed proof is disabled on self-hosted runners until disposable-guest isolation is attested; host Homebrew must not be mutated." >&2
+            exit 1
+          fi
+          # homebrew-proof-isolation:end
+
       - name: Validate private tap token
         shell: sh
         run: |

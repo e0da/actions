@@ -88,6 +88,7 @@ jobs:
           sh tests/release_gist_contract.sh
           sh tests/release_gist_exact_set.sh
           sh tests/release_homebrew_interface.sh
+          sh tests/homebrew_runner_isolation.sh
           sh tests/release_homebrew_tag_namespace.sh
           python3 tests/release_homebrew_deterministic_archive.py
           python3 tests/release_homebrew_asset_immutability.py
