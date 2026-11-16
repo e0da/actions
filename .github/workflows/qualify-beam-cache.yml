@@ -11,7 +11,7 @@ on:
       qualification:
         description: "Run the existing download-cache proof or the opt-in native-result proof."
         type: choice
-        options: [beam-cache, native-proof]
+        options: [beam-cache, native-proof, force-native, unqualified-runtime]
         default: beam-cache
 
 concurrency:
@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   cold:
-    if: inputs.qualification != 'native-proof'
+    if: inputs.qualification == '' || inputs.qualification == 'beam-cache'
     uses: ./.github/workflows/ci-elixir.yml
     with:
       runner: actions-linux-arm64
@@ -39,7 +39,7 @@ jobs:
         elixir tests/beam_cache_qualification.exs
 
   warm:
-    if: inputs.qualification != 'native-proof'
+    if: inputs.qualification == '' || inputs.qualification == 'beam-cache'
     needs: cold
     uses: ./.github/workflows/ci-elixir.yml
     with:
@@ -56,14 +56,15 @@ jobs:
 
   proof-cold:
     if: inputs.qualification == 'native-proof'
-    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@f63b76f20226fff718042f5dadbb30bcd161c785
+    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@c5515b3e23b85209e7a8dc60ebf95ad7bd08de5e
     with:
       runner: actions-linux-arm64
       otp-version: "29.0.2"
       elixir-version: "1.20.1"
       cache-mode: "off"
       toolchain-cache-mode: read-write
-      toolchain-cache-salt: native-proof-static-contract-v3
+      toolchain-cache-salt: admission-proof-v5
+      result-reuse-platform: Linux-ARM64
       result-reuse-environment: ghcr.io/e0da/actions-linux-runner:2.334.0-otp27.3.4.11-elixir1.18.4-arc5@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
       deps-command: ":"
       ci-command: |
@@ -76,14 +77,15 @@ jobs:
   proof-warm:
     needs: proof-cold
     if: inputs.qualification == 'native-proof'
-    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@f63b76f20226fff718042f5dadbb30bcd161c785
+    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@c5515b3e23b85209e7a8dc60ebf95ad7bd08de5e
     with:
       runner: actions-linux-arm64
       otp-version: "29.0.2"
       elixir-version: "1.20.1"
       cache-mode: "off"
       toolchain-cache-mode: read-write
-      toolchain-cache-salt: native-proof-static-contract-v3
+      toolchain-cache-salt: admission-proof-v5
+      result-reuse-platform: Linux-ARM64
       result-reuse-environment: ghcr.io/e0da/actions-linux-runner:2.334.0-otp27.3.4.11-elixir1.18.4-arc5@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
       deps-command: ":"
       ci-command: |
@@ -92,3 +94,84 @@ jobs:
         otp_root=$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().')
         test "$(cat "$otp_root/releases/29/OTP_VERSION")" = 29.0.2
         elixir tests/beam_cache_qualification.exs
+
+  force-native:
+    if: inputs.qualification == 'force-native'
+    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@c5515b3e23b85209e7a8dc60ebf95ad7bd08de5e
+    with:
+      force-native: true
+      runner: actions-linux-arm64
+      otp-version: "29.0.2"
+      elixir-version: "1.20.1"
+      cache-mode: "off"
+      toolchain-cache-mode: read-write
+      toolchain-cache-salt: admission-proof-v5
+      result-reuse-platform: Linux-ARM64
+      result-reuse-environment: ghcr.io/e0da/actions-linux-runner:2.334.0-otp27.3.4.11-elixir1.18.4-arc5@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
+      deps-command: ":"
+      ci-command: |
+        elixir --version
+        test "$(elixir --short-version)" = 1.20.1
+        otp_root=$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().')
+        test "$(cat "$otp_root/releases/29/OTP_VERSION")" = 29.0.2
+        elixir tests/beam_cache_qualification.exs
+
+  unqualified-runtime:
+    if: inputs.qualification == 'unqualified-runtime'
+    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@c5515b3e23b85209e7a8dc60ebf95ad7bd08de5e
+    with:
+      runner: actions-linux-arm64
+      otp-version: "29.0.2"
+      elixir-version: "1.20.1"
+      cache-mode: "off"
+      toolchain-cache-mode: read-write
+      toolchain-cache-salt: admission-proof-v5
+      result-reuse-platform: Linux-ARM64
+      result-reuse-environment: ghcr.io/e0da/actions-linux-runner:qualification-mismatch@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
+      deps-command: ":"
+      ci-command: |
+        elixir --version
+        test "$(elixir --short-version)" = 1.20.1
+        otp_root=$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().')
+        test "$(cat "$otp_root/releases/29/OTP_VERSION")" = 29.0.2
+        elixir tests/beam_cache_qualification.exs
+
+
+  verify-boundary:
+    name: Verify admission outcome
+    needs: [proof-cold, proof-warm, force-native, unqualified-runtime]
+    if: always() && (inputs.qualification == 'native-proof' || inputs.qualification == 'force-native' || inputs.qualification == 'unqualified-runtime')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          QUALIFICATION: ${{ inputs.qualification }}
+        with:
+          script: |
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {...context.repo, run_id: context.runId, attempt_number: Number(process.env.GITHUB_RUN_ATTEMPT), per_page: 100});
+            const job = name => {
+              const matches = jobs.filter(j => j.name === name);
+              if (matches.length !== 1) throw new Error(`Expected exactly one ${name}`);
+              return matches[0];
+            };
+            const requireStep = (j, name, conclusion) => {
+              if (!j.steps.some(s => s.name === name && s.conclusion === conclusion)) throw new Error(`${j.name}: expected ${name} ${conclusion}`);
+            };
+            const requireNative = (prefix, proof) => {
+              const native = job(`${prefix} / Native`);
+              if (native.conclusion !== 'success' || job(`${prefix} / Mix`).conclusion !== 'success') throw new Error(`${prefix}: native/final result not successful`);
+              requireStep(native, 'Run CI', 'success');
+              requireStep(native, 'Record native execution receipt', proof ? 'success' : 'skipped');
+              requireStep(native, 'Attest native receipt as immutable artifact', proof ? 'success' : 'skipped');
+            };
+            if (process.env.QUALIFICATION === 'native-proof') {
+              requireNative('proof-cold', true);
+              if (job('proof-warm / Native').conclusion !== 'skipped' || job('proof-warm / Mix').conclusion !== 'success') throw new Error('Warm result allocated native work or did not pass');
+              const gate = job('proof-warm / Verify prior result');
+              if (gate.conclusion !== 'success') throw new Error('Warm hosted verifier failed');
+              requireStep(gate, 'Verify prior successful native job', 'success');
+              core.info('Native cold execution and hosted warm hit passed; warm native job was skipped');
+            } else {
+              requireNative(process.env.QUALIFICATION, false);
+              core.info('Native fallback executed and published no reusable native receipt');
+            }
