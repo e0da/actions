@@ -7,12 +7,20 @@ on:
       - .github/workflows/qualify-beam-cache.yml
       - tests/beam_cache_qualification.exs
   workflow_dispatch:
+    inputs:
+      qualification:
+        description: "Run the existing download-cache proof or the opt-in native-result proof."
+        type: choice
+        options: [beam-cache, native-proof]
+        default: beam-cache
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   cold:
+    if: inputs.qualification != 'native-proof'
     uses: ./.github/workflows/ci-elixir.yml
     with:
       runner: actions-linux-arm64
@@ -27,6 +35,7 @@ jobs:
         elixir tests/beam_cache_qualification.exs
 
   warm:
+    if: inputs.qualification != 'native-proof'
     needs: cold
     uses: ./.github/workflows/ci-elixir.yml
     with:
@@ -39,4 +48,43 @@ jobs:
       deps-command: ":"
       ci-command: |
         test "$BEAM_DOWNLOAD_CACHE_HIT" = true
+        elixir tests/beam_cache_qualification.exs
+
+  proof-cold:
+    if: inputs.qualification == 'native-proof'
+    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@8c7e33c206279d5b3a2d71f23dc8a7ac4535c56d
+    with:
+      runner: actions-linux-arm64
+      otp-version: "29.0.2"
+      elixir-version: "1.20.1"
+      cache-mode: "off"
+      toolchain-cache-mode: read-write
+      toolchain-cache-salt: native-proof-${{ github.run_id }}-${{ github.run_attempt }}
+      result-reuse-environment: ghcr.io/e0da/actions-linux-runner@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
+      deps-command: ":"
+      ci-command: |
+        elixir --version
+        test "$(elixir --short-version)" = 1.20.1
+        otp_root=$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().')
+        test "$(cat "$otp_root/releases/29/OTP_VERSION")" = 29.0.2
+        elixir tests/beam_cache_qualification.exs
+
+  proof-warm:
+    needs: proof-cold
+    if: inputs.qualification == 'native-proof'
+    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@8c7e33c206279d5b3a2d71f23dc8a7ac4535c56d
+    with:
+      runner: actions-linux-arm64
+      otp-version: "29.0.2"
+      elixir-version: "1.20.1"
+      cache-mode: "off"
+      toolchain-cache-mode: read-write
+      toolchain-cache-salt: native-proof-${{ github.run_id }}-${{ github.run_attempt }}
+      result-reuse-environment: ghcr.io/e0da/actions-linux-runner@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
+      deps-command: ":"
+      ci-command: |
+        elixir --version
+        test "$(elixir --short-version)" = 1.20.1
+        otp_root=$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().')
+        test "$(cat "$otp_root/releases/29/OTP_VERSION")" = 29.0.2
         elixir tests/beam_cache_qualification.exs
