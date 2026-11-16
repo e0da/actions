@@ -102,3 +102,7 @@ for(const observedImage of ['', 'image@sha256:'+'d'.repeat(64)]) test(`missing o
 
 test('cached runtime ref must match the verified current runtime',async()=>assert.equal(await verify({proof:{...validProof,runtime:'other-image'}}),'false'));
 test('immutable native artifact must attest runtime ref too',async()=>assert.equal(await verify({native:{...validProof,runtime:'other-image'}}),'false'));
+
+const configuredRef='ghcr.io/e0da/actions-linux-runner:arc5@sha256:'+'c'.repeat(64);
+test('exact tagged configured image ref is recorded in proof',async()=>assert.equal((await identify(['a'.repeat(40)],'tree','Linux-ARM64',JSON.stringify({...policy,'result-reuse-environment':configuredRef}),'.github/workflows/mcog.yml',configuredRef)).runtime,configuredRef));
+test('a different configured ref still runs native even with the same digest',async()=>assert.equal((await identify(['a'.repeat(40)],'tree','Linux-ARM64',JSON.stringify(policy),'.github/workflows/mcog.yml',configuredRef)).key,undefined));

@@ -56,7 +56,7 @@ jobs:
 
   proof-cold:
     if: inputs.qualification == 'native-proof'
-    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@9c37f8c248bc3e960cf3260d8039382de2585325
+    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@f63b76f20226fff718042f5dadbb30bcd161c785
     with:
       runner: actions-linux-arm64
       otp-version: "29.0.2"
@@ -64,7 +64,7 @@ jobs:
       cache-mode: "off"
       toolchain-cache-mode: read-write
       toolchain-cache-salt: native-proof-static-contract-v3
-      result-reuse-environment: ghcr.io/e0da/actions-linux-runner@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
+      result-reuse-environment: ghcr.io/e0da/actions-linux-runner:2.334.0-otp27.3.4.11-elixir1.18.4-arc5@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
       deps-command: ":"
       ci-command: |
         elixir --version
@@ -76,7 +76,7 @@ jobs:
   proof-warm:
     needs: proof-cold
     if: inputs.qualification == 'native-proof'
-    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@9c37f8c248bc3e960cf3260d8039382de2585325
+    uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@f63b76f20226fff718042f5dadbb30bcd161c785
     with:
       runner: actions-linux-arm64
       otp-version: "29.0.2"
@@ -84,7 +84,7 @@ jobs:
       cache-mode: "off"
       toolchain-cache-mode: read-write
       toolchain-cache-salt: native-proof-static-contract-v3
-      result-reuse-environment: ghcr.io/e0da/actions-linux-runner@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
+      result-reuse-environment: ghcr.io/e0da/actions-linux-runner:2.334.0-otp27.3.4.11-elixir1.18.4-arc5@sha256:5934bc07eee8e7e5f95fd7387aa5cc53fc12bd001e07b46bed0ef145adb2f7a7
       deps-command: ":"
       ci-command: |
         elixir --version
