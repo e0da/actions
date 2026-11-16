@@ -270,7 +270,9 @@ Use reuse only for checkout-and-contract-bound commands; title/review checks,
 external-link checks, release proofs and live environment qualification are not
 eligible. Ruby with YAML/JSON and unzip are needed for hosted verification.
 
-Receipts contain identity metadata, not credentials or build outputs. An invalid
+Receipts contain identity metadata, not credentials or build outputs. The proof
+pointer uses `.git/elixir-native-proof.json` in each fresh checkout so its cache
+version does not depend on different hosted/native temporary-directory paths. An invalid
 pointer in an immutable cache key causes native execution until expiration or
 removal. GitHub cache scope may prevent reuse across PR refs. Source tests do
 not establish hosted latency, avoided queue time or consumer adoption; the

@@ -83,6 +83,7 @@ test('push/dispatch proof binds exact run head',async()=>{
 test('artifact is immutable and precedes cache pointer publication',()=>{
  const artifact=steps.find(s=>s.name==='Attest native receipt as immutable artifact');
  assert.equal(artifact.with.overwrite,false);assert.equal(artifact.with['if-no-files-found'],'error');
+ assert.equal(artifact.with['include-hidden-files'],true);assert.equal(artifact.with.path,'.git/elixir-native-proof.json');
  assert.ok(steps.indexOf(artifact)<steps.findIndex(s=>s.name==='Save native execution receipt'));
 });
 
@@ -178,4 +179,13 @@ function gateAdmitted(inputs) {
 test('disabled or force-native inputs avoid hosted proof work',()=>{
  assert.equal(gateAdmitted(actualInputs),true);
  for(const change of [{'result-reuse-environment':''},{'result-reuse-platform':''},{'force-native':true}]) assert.equal(gateAdmitted({...actualInputs,...change}),false);
+});
+
+test('proof pointer uses the same relative cache path on hosted and native runners',()=>{
+ const restore=admissionSteps.find(s=>s.name==='Restore prior native proof');
+ const save=steps.find(s=>s.name==='Save native execution receipt');
+ assert.equal(restore.with.path,'.git/elixir-native-proof.json');
+ assert.equal(save.with.path,restore.with.path);
+ for(const step of [...admissionSteps,...steps]) if(step.env?.PROOF_FILE) assert.equal(step.env.PROOF_FILE,restore.with.path);
+ assert.equal(steps.find(s=>s.name==='Attest native receipt as immutable artifact').with.path,restore.with.path);
 });

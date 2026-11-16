@@ -143,7 +143,7 @@ jobs:
         if: steps.proof-key.outputs.key != ''
         uses: actions/cache/restore@v5
         with:
-          path: ${{ runner.temp }}/elixir-native-proof.json
+          path: .git/elixir-native-proof.json
           key: ${{ steps.proof-key.outputs.key }}
 
       - name: Verify prior successful native job
@@ -152,7 +152,7 @@ jobs:
         if: steps.proof-cache.outputs.cache-hit == 'true'
         uses: actions/github-script@v8
         env:
-          PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
+          PROOF_FILE: .git/elixir-native-proof.json
           PROOF_KEY: ${{ steps.proof-key.outputs.key }}
           PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
           PROOF_RUNTIME: ${{ steps.proof-key.outputs.runtime }}
@@ -440,7 +440,7 @@ jobs:
         if: steps.proof-key.outputs.key != ''
         uses: actions/github-script@v8
         env:
-          PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
+          PROOF_FILE: .git/elixir-native-proof.json
           PROOF_KEY: ${{ steps.proof-key.outputs.key }}
           PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
           PROOF_RUNTIME: ${{ steps.proof-key.outputs.runtime }}
@@ -461,16 +461,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.native-receipt.outputs.artifact }}
-          path: ${{ runner.temp }}/elixir-native-proof.json
+          path: .git/elixir-native-proof.json
           if-no-files-found: error
           retention-days: 7
           overwrite: false
+          include-hidden-files: true
 
       - name: Save native execution receipt
         if: steps.proof-key.outputs.key != ''
         uses: actions/cache/save@v5
         with:
-          path: ${{ runner.temp }}/elixir-native-proof.json
+          path: .git/elixir-native-proof.json
           key: ${{ steps.proof-key.outputs.key }}
 
   mix:
