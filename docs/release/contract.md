@@ -65,3 +65,14 @@ so later operations use a repository-local credential helper with normal Git.
 The origin and helper contain no token value. The helper reads the job token only
 for HTTPS requests to the intended GitHub tap, including its exact repository
 path. Global Git configuration and public taps remain unchanged.
+
+`homebrew-proof-only: true` qualifies the already-published formula without
+scheduling a native build or publishing assets. It requires `run-homebrew-proof:
+true` and `publish-github-release: false`; incompatible inputs fail the workflow.
+The default remains false, so ordinary release builds and tag publication retain
+their existing gates. Installed-only mode retains the same intrinsic hosted
+macOS ARM64 guard, private authentication, installation, test and smoke steps.
+
+The hosted guest explicitly trusts only the requested formula with `brew trust
+--formula TAP/FORMULA` before fetching it. It does not trust every formula in the
+tap or change a fleet host's trust configuration.
