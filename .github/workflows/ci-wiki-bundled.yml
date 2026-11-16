@@ -812,6 +812,11 @@ jobs:
 
           ruby --version
           gem install bundler --no-document
+          openssl_build_unconfigured="$(ruby -rbundler -e 'print Bundler.settings["build.openssl"].nil?')"
+          if [ "$openssl_build_unconfigured" = true ]; then
+            openssl_prefix="$(brew --prefix openssl@3)"
+            export BUNDLE_BUILD__OPENSSL="--with-openssl-dir=${openssl_prefix}"
+          fi
           bundle config set --local path "$RUNNER_TEMP/bundle"
           bundle install --jobs 4 --retry 3
 

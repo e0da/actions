@@ -241,3 +241,19 @@ The implementation/adoption closeout should compare:
 - Do not remove the existing reusable workflows in this slice.
 - Do not claim host capacity is solved; this proof is about workflow demand on
   the current wiki macOS runner lane.
+
+## macOS native Ruby extensions
+
+The existing Homebrew Ruby setup selects the already-installed `openssl@3`
+prefix for Bundler native extensions when Bundler has no `build.openssl`
+setting. Bundler's own settings lookup preserves local, environment and global
+overrides, including an explicitly empty setting. Linux continues through
+`ruby/setup-ruby` unchanged. A missing prefix fails Ruby setup before bundle
+installation; this step neither installs another OpenSSL formula nor weakens
+the required build/check result.
+
+This addresses the observed Wiki CI failure where OpenSSL gem 4.0.2 compiled
+against OpenSSL 4 headers with OpenSSL 3 library paths. An isolated local build
+reproduced the ASN1 redeclaration failure; selecting one OpenSSL 3 prefix built
+and loaded the same gem. Upstream documents explicit prefix selection in its
+[installation guidance](https://github.com/ruby/openssl#installation).
