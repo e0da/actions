@@ -790,19 +790,29 @@ jobs:
           set -eu
           # homebrew-private-git:start
           if [ "$HOMEBREW_TAP" = "e0da/internal" ]; then
-            private_git="$RUNNER_TEMP/homebrew-private-git"
-            cat > "$private_git" <<'SH'
-          #!/bin/sh
-          set -eu
-          : "${HOMEBREW_GITHUB_API_TOKEN:?private tap token is required}"
-          export GIT_CONFIG_COUNT=1
-          GIT_CONFIG_KEY_0="url.https://x-access-token:${HOMEBREW_GITHUB_API_TOKEN}@github.com/.insteadOf"
-          export GIT_CONFIG_KEY_0
-          export GIT_CONFIG_VALUE_0=https://github.com/
-          exec /usr/bin/git "$@"
-          SH
-            chmod 700 "$private_git"
-            printf 'HOMEBREW_GIT=%s\n' "$private_git" >> "$GITHUB_ENV"
+            tap_dir="$(brew --repository)/Library/Taps/e0da/homebrew-internal"
+            GIT_CONFIG_COUNT=1 \
+              GIT_CONFIG_KEY_0="url.https://x-access-token:${HOMEBREW_GITHUB_API_TOKEN}@github.com/.insteadOf" \
+              GIT_CONFIG_VALUE_0=https://github.com/ \
+              git clone -- https://github.com/e0da/homebrew-internal "$tap_dir"
+            # Git expands the token reference when it requests credentials.
+            # shellcheck disable=SC2016
+            helper='!f() {
+            [ "$1" = get ] || return 0
+            protocol= host= path=
+            while IFS="=" read -r key value; do
+              case "$key" in
+                protocol) protocol=$value ;;
+                host) host=$value ;;
+                path) path=$value ;;
+              esac
+            done
+            [ "$protocol" = https ] && [ "$host" = github.com ] || return 0
+            [ "$path" = e0da/homebrew-internal ] || return 0
+            printf "username=x-access-token\npassword=%s\n" "$HOMEBREW_GITHUB_API_TOKEN"
+          }; f'
+            git -C "$tap_dir" config credential.useHttpPath true
+            git -C "$tap_dir" config credential.https://github.com/e0da/homebrew-internal.helper "$helper"
           fi
           # homebrew-private-git:end
 

@@ -59,8 +59,9 @@ ordinary release download URL.
 
 For the first namespaced product tag, an absent derived previous version is treated as an initial release only when no other tag exists in that product namespace. An explicit missing baseline, or a missing baseline with existing product history, still fails.
 
-The private tap uses a guest-temporary `HOMEBREW_GIT` wrapper. Homebrew filters
-`GIT_CONFIG_*` at launch, so the wrapper applies the process-scoped URL rewrite
-immediately before invoking Git. Its file contains no token value; it reads the
-job's `HOMEBREW_GITHUB_API_TOKEN`. Global Git configuration is preserved, and the
-intrinsic hosted macOS ARM64 guard precedes wrapper creation.
+The private tap is cloned with direct Git process authentication after the hosted
+runner guard. Homebrew filters `GIT_CONFIG_*` and selects its own Git executable,
+so later operations use a repository-local credential helper with normal Git.
+The origin and helper contain no token value. The helper reads the job token only
+for HTTPS requests to the intended GitHub tap, including its exact repository
+path. Global Git configuration and public taps remain unchanged.
