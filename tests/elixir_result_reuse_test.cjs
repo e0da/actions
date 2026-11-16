@@ -5,13 +5,15 @@ const workflow = JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'put
 const steps = workflow.jobs.mix.steps;
 const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 function script(name) { return steps.find(s => s.name === name).with.script; }
-async function verify({proof = {key:'k', tree:'t', repository:'e0da/stack', run_id:10, job_id:20}, job = {run_id:10, status:'completed', conclusion:'success', steps:[{name:'Run CI', status:'completed', conclusion:'success'}], html_url:'proof-url'}} = {}) {
+const validProof = {key:'k', tree:'t', repository:'e0da/stack', workflow:'.github/workflows/mcog.yml', checkout:'merge', run_id:10, job_id:20};
+async function verify({proof = {...validProof}, job = {run_id:10, head_sha:'head', status:'completed', conclusion:'success', steps:[{name:'Run CI', status:'completed', conclusion:'success'}], html_url:'proof-url'}, run = {head_sha:'head', path:'.github/workflows/mcog.yml', event:'pull_request', pull_requests:[{head:{sha:'head'},base:{sha:'base'}}]}, commit = {tree:{sha:'t'},parents:[{sha:'base'},{sha:'head'}]}, native = {...validProof}, artifacts, apiError} = {}) {
   const outputs = {};
   const core = {setOutput:(k,v)=>outputs[k]=v, summary:{addRaw:()=>({write:async()=>{}})}};
+  const fs = {readFileSync:()=>JSON.stringify(proof),writeFileSync:()=>{}};
+  const github = {paginate:async()=>artifacts ?? [{id:30,name:'elixir-native-20-k',expired:false}],rest:{actions:{getJobForWorkflowRun:async()=>{if(apiError)throw Error(apiError);return {data:job};},getWorkflowRun:async()=>({data:run}),listWorkflowRunArtifacts(){},downloadArtifact:async()=>({data:Buffer.from('zip')})},git:{getCommit:async()=>({data:commit})}}};
   await new AsyncFunction('require','process','core','github','context', script('Verify prior successful native job'))(
-    name => {assert.equal(name,'node:fs'); return {readFileSync:()=>JSON.stringify(proof)};},
-    {env:{PROOF_FILE:'receipt', PROOF_KEY:'k', PROOF_TREE:'t'}}, core,
-    {rest:{actions:{getJobForWorkflowRun:async args=>{assert.equal(args.job_id,20);return {data:job};}}}},
+    name => name==='node:fs'?fs:{execFileSync:()=>JSON.stringify(native)},
+    {env:{PROOF_FILE:'receipt', PROOF_KEY:'k', PROOF_TREE:'t',PROOF_WORKFLOW:'.github/workflows/mcog.yml'}}, core, github,
     {repo:{owner:'e0da',repo:'stack'}});
   return outputs.reused;
 }
@@ -20,8 +22,8 @@ for(const conclusion of ['failure','cancelled','skipped','timed_out',null]) test
 test('does not reuse unfinished job',async()=>assert.equal(await verify({job:{run_id:10,status:'in_progress',conclusion:null,steps:[]}}),'false'));
 test('does not reuse a receipt from a different run',async()=>assert.equal(await verify({job:{run_id:11,status:'completed',conclusion:'success',steps:[]}}),'false'));
 test('successful skipped-proof job cannot become native evidence',async()=>assert.equal(await verify({job:{run_id:10,status:'completed',conclusion:'success',steps:[{name:'Run CI',status:'completed',conclusion:'skipped'}]}}),'false'));
-for(const [field,value] of [['key','wrong'],['tree','wrong'],['repository','other/repo']]) test(`rejects mismatched ${field}`,async()=>assert.rejects(()=>verify({proof:{key:'k',tree:'t',repository:'e0da/stack',run_id:10,job_id:20,[field]:value}}),/identity/));
-test('API errors cannot credit success',async()=>assert.rejects(()=>new AsyncFunction('require','process','core','github','context',script('Verify prior successful native job'))(()=>({readFileSync:()=>JSON.stringify({key:'k',tree:'t',repository:'e0da/stack',job_id:20})}),{env:{PROOF_KEY:'k',PROOF_TREE:'t'}},{},{rest:{actions:{getJobForWorkflowRun:async()=>{throw Error('403');}}}},{repo:{owner:'e0da',repo:'stack'}}),/403/));
+for(const [field,value] of [['key','wrong'],['tree','wrong'],['repository','other/repo']]) test(`rejects mismatched ${field}`,async()=>assert.equal(await verify({proof:{...validProof,[field]:value}}),'false'));
+test('API errors cannot credit success',async()=>assert.rejects(()=>verify({apiError:'403'}),/403/));
 test('only verified success bypasses setup and execution',()=>{
  for(const name of ['Identify immutable toolchain cache','Cache downloaded BEAM tools','Set up BEAM','Verify preinstalled BEAM','Cache Mix deps','Configure private git deps (SSH)','Install deps','Run CI']) assert.match(steps.find(s=>s.name===name).if,/steps.proof.outputs.reused != 'true'/,name);
  assert.match(steps.find(s=>s.id==='proof-key').if,/PRIVATE_DEPS_SSH_KEY == ''/);
@@ -54,6 +56,21 @@ test('original native commands, cache paths and input defaults are preserved',()
 });
 for(const count of [0,1,2]) test(`receipt requires unique active runner job (${count})`,async()=>{
  let saved;
- const call=()=>new AsyncFunction('require','process','github','context',script('Record native execution receipt'))(()=>({writeFileSync:(_,s)=>saved=JSON.parse(s)}),{env:{GITHUB_RUN_ATTEMPT:'1',PROOF_RUNNER:'runner',PROOF_KEY:'k',PROOF_TREE:'t',PROOF_FILE:'receipt'}},{paginate:async()=>Array.from({length:count},(_,i)=>({id:i+20,status:'in_progress',runner_name:'runner'})),rest:{actions:{listJobsForWorkflowRunAttempt(){}}}},{repo:{owner:'e0da',repo:'stack'},runId:10});
- if(count===1) {await call();assert.deepEqual(saved,{key:'k',tree:'t',repository:'e0da/stack',run_id:10,job_id:20});} else await assert.rejects(call,/uniquely/);
+ const call=()=>new AsyncFunction('require','process','github','context','core',script('Record native execution receipt'))(()=>({writeFileSync:(_,s)=>saved=JSON.parse(s)}),{env:{GITHUB_RUN_ATTEMPT:'1',PROOF_RUNNER:'runner',PROOF_KEY:'k',PROOF_TREE:'t',PROOF_FILE:'receipt',PROOF_WORKFLOW:'.github/workflows/mcog.yml',PROOF_CHECKOUT:'merge'}},{paginate:async()=>Array.from({length:count},(_,i)=>({id:i+20,status:'in_progress',runner_name:'runner'})),rest:{actions:{listJobsForWorkflowRunAttempt(){}}}},{repo:{owner:'e0da',repo:'stack'},runId:10},{setOutput:()=>{}});
+ if(count===1) {await call();assert.deepEqual(saved,validProof);} else await assert.rejects(call,/uniquely/);
+});
+
+test('unrelated successful native job cannot authorize this tree/contract',async()=>{
+ assert.equal(await verify({job:{run_id:10,head_sha:'unrelated-commit',workflow_name:'Unrelated workflow',name:'unrelated native checks',status:'completed',conclusion:'success',steps:[{name:'Run CI',status:'completed',conclusion:'success'}],html_url:'unrelated-job'}}),'false');
+});
+
+for(const change of [{commit:{tree:{sha:'other'},parents:[]}},{run:{head_sha:'head',path:'other.yml'}},{run:{head_sha:'other',path:'.github/workflows/mcog.yml'}},{commit:{tree:{sha:'t'},parents:[{sha:'other'},{sha:'head'}]}},{native:{...validProof,key:'forged'}},{native:{...validProof,job_id:99}},{artifacts:[]},{artifacts:[{id:30,name:'elixir-native-20-k',expired:true}]}]) test(`rejects wrong source/artifact ${JSON.stringify(change)}`,async()=>assert.equal(await verify(change),'false'));
+test('push/dispatch proof binds exact run head',async()=>{
+ assert.equal(await verify({proof:{...validProof,checkout:'head'},native:{...validProof,checkout:'head'},run:{head_sha:'head',path:'.github/workflows/mcog.yml',event:'workflow_dispatch'}}),'true');
+ assert.equal(await verify({run:{head_sha:'head',path:'.github/workflows/mcog.yml',event:'workflow_dispatch'}}),'false');
+});
+test('artifact is immutable and precedes cache pointer publication',()=>{
+ const artifact=steps.find(s=>s.name==='Attest native receipt as immutable artifact');
+ assert.equal(artifact.with.overwrite,false);assert.equal(artifact.with['if-no-files-found'],'error');
+ assert.ok(steps.indexOf(artifact)<steps.findIndex(s=>s.name==='Save native execution receipt'));
 });

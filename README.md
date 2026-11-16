@@ -251,7 +251,7 @@ API must confirm that its original native job completed successfully and its
 proofs execute the native checks. Identity mismatches and API authorization
 failures fail visibly. A reused job cannot mint a new native receipt.
 
-The receipt contains only repository, tree/key, run ID and job ID. No build
+The receipt contains only repository, tree/key, checkout commit, workflow path, run ID and job ID. No build
 outputs or credentials are proof. An unsuccessful receipt occupying an immutable
 cache key causes native execution until that cache expires or is removed.
 GitHub cache scope may prevent reuse across PR refs. This still allocates a

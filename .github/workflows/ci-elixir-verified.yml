@@ -137,9 +137,11 @@ jobs:
               throw new Error('Result reuse requires one immutable ci-elixir-verified workflow revision in the direct caller');
             }
             const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {encoding: 'utf8'}).trim();
-            const key = 'elixir-proof-v1-' + createHash('sha256').update(JSON.stringify({tree, inputs: process.env.REUSE_INPUTS, platform: process.env.PROOF_PLATFORM, workflow: refs[0]})).digest('hex');
+            const key = 'elixir-proof-v2-' + createHash('sha256').update(JSON.stringify({tree, inputs: process.env.REUSE_INPUTS, platform: process.env.PROOF_PLATFORM, workflow: refs[0]})).digest('hex');
             core.setOutput('key', key);
             core.setOutput('tree', tree);
+            core.setOutput('checkout', execFileSync('git', ['rev-parse', 'HEAD'], {encoding: 'utf8'}).trim());
+            core.setOutput('workflow', workflowPath);
 
       - name: Restore prior native proof
         id: proof-cache
@@ -157,17 +159,40 @@ jobs:
           PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
           PROOF_KEY: ${{ steps.proof-key.outputs.key }}
           PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
+          PROOF_WORKFLOW: ${{ steps.proof-key.outputs.workflow }}
         with:
           script: |
             const fs = require('node:fs');
+            const {execFileSync} = require('node:child_process');
             const proof = JSON.parse(fs.readFileSync(process.env.PROOF_FILE, 'utf8'));
-            if (proof.key !== process.env.PROOF_KEY || proof.tree !== process.env.PROOF_TREE || proof.repository !== `${context.repo.owner}/${context.repo.repo}`) {
-              throw new Error('Native proof identity does not match this execution contract');
-            }
+            const reject = async reason => {
+              core.setOutput('reused', 'false');
+              await core.summary.addRaw(`Native execution required: ${reason}`).write();
+            };
+            if (proof.key !== process.env.PROOF_KEY || proof.tree !== process.env.PROOF_TREE || proof.repository !== `${context.repo.owner}/${context.repo.repo}`) return reject('receipt identity mismatch');
             const {data: job} = await github.rest.actions.getJobForWorkflowRun({...context.repo, job_id: proof.job_id});
-            const valid = job.run_id === proof.run_id && job.status === 'completed' && job.conclusion === 'success' && job.steps.some(step => step.name === 'Run CI' && step.status === 'completed' && step.conclusion === 'success');
-            core.setOutput('reused', valid ? 'true' : 'false');
-            await core.summary.addRaw(valid ? `Reused native proof: ${job.html_url}; tree ${proof.tree}` : 'Prior job did not complete successfully; executing native checks.').write();
+            if (job.run_id !== proof.run_id || job.status !== 'completed' || job.conclusion !== 'success' || !job.steps.some(step => step.name === 'Run CI' && step.status === 'completed' && step.conclusion === 'success')) return reject('prior native job not successful');
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: proof.run_id});
+            if (run.path !== process.env.PROOF_WORKFLOW || proof.workflow !== process.env.PROOF_WORKFLOW || job.head_sha !== run.head_sha) return reject('prior workflow identity mismatch');
+            const {data: commit} = await github.rest.git.getCommit({...context.repo, commit_sha: proof.checkout});
+            if (commit.tree.sha !== process.env.PROOF_TREE) return reject('prior checkout tree mismatch');
+            if (run.event === 'pull_request') {
+              const pr = run.pull_requests.find(pr => pr.head.sha === run.head_sha);
+              if (!pr || commit.parents.length !== 2 || commit.parents[0].sha !== pr.base.sha || commit.parents[1].sha !== pr.head.sha) return reject('prior merge checkout not bound to run head/base');
+            } else if (proof.checkout !== run.head_sha) return reject('prior checkout not bound to run head');
+            const name = `elixir-native-${proof.job_id}-${proof.key}`;
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {...context.repo, run_id: proof.run_id, per_page: 100});
+            const matches = artifacts.filter(a => a.name === name && !a.expired);
+            if (matches.length !== 1) return reject('immutable native artifact absent');
+            const {data: zip} = await github.rest.actions.downloadArtifact({...context.repo, artifact_id: matches[0].id, archive_format: 'zip'});
+            const archive = process.env.PROOF_FILE + '.zip';
+            fs.writeFileSync(archive, Buffer.from(zip));
+            const native = JSON.parse(execFileSync('unzip', ['-p', archive, 'elixir-native-proof.json'], {encoding: 'utf8'}));
+            for (const field of ['key', 'tree', 'repository', 'workflow', 'checkout', 'run_id', 'job_id']) {
+              if (native[field] !== proof[field]) return reject('artifact does not attest cached pointer');
+            }
+            core.setOutput('reused', 'true');
+            await core.summary.addRaw(`Reused native proof: ${job.html_url}; tree ${proof.tree}; immutable artifact ${matches[0].id}`).write();
 
       - name: Identify immutable toolchain cache
         id: beam-platform
@@ -307,12 +332,15 @@ jobs:
         run: ${{ inputs.ci-command }}
 
       - name: Record native execution receipt
+        id: native-receipt
         if: steps.proof-key.outputs.key != '' && steps.proof.outputs.reused != 'true' && steps.proof-cache.outputs.cache-hit != 'true'
         uses: actions/github-script@v8
         env:
           PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
           PROOF_KEY: ${{ steps.proof-key.outputs.key }}
           PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
+          PROOF_WORKFLOW: ${{ steps.proof-key.outputs.workflow }}
+          PROOF_CHECKOUT: ${{ steps.proof-key.outputs.checkout }}
           PROOF_RUNNER: ${{ runner.name }}
         with:
           script: |
@@ -320,7 +348,18 @@ jobs:
             const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {...context.repo, run_id: context.runId, attempt_number: Number(process.env.GITHUB_RUN_ATTEMPT), per_page: 100});
             const matches = jobs.filter(job => job.status === 'in_progress' && job.runner_name === process.env.PROOF_RUNNER);
             if (matches.length !== 1) throw new Error('Cannot identify the native job uniquely');
-            fs.writeFileSync(process.env.PROOF_FILE, JSON.stringify({key: process.env.PROOF_KEY, tree: process.env.PROOF_TREE, repository: `${context.repo.owner}/${context.repo.repo}`, run_id: context.runId, job_id: matches[0].id}));
+            fs.writeFileSync(process.env.PROOF_FILE, JSON.stringify({key: process.env.PROOF_KEY, tree: process.env.PROOF_TREE, repository: `${context.repo.owner}/${context.repo.repo}`, workflow: process.env.PROOF_WORKFLOW, checkout: process.env.PROOF_CHECKOUT, run_id: context.runId, job_id: matches[0].id}));
+            core.setOutput('artifact', `elixir-native-${matches[0].id}-${process.env.PROOF_KEY}`);
+
+      - name: Attest native receipt as immutable artifact
+        if: steps.native-receipt.outputs.artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.native-receipt.outputs.artifact }}
+          path: ${{ runner.temp }}/elixir-native-proof.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
 
       - name: Save native execution receipt
         if: steps.proof-key.outputs.key != '' && steps.proof.outputs.reused != 'true' && steps.proof-cache.outputs.cache-hit != 'true'
