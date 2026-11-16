@@ -58,3 +58,9 @@ URL and preserve the download-strategy argument. Public formulas retain the
 ordinary release download URL.
 
 For the first namespaced product tag, an absent derived previous version is treated as an initial release only when no other tag exists in that product namespace. An explicit missing baseline, or a missing baseline with existing product history, still fails.
+
+The private tap uses a guest-temporary `HOMEBREW_GIT` wrapper. Homebrew filters
+`GIT_CONFIG_*` at launch, so the wrapper applies the process-scoped URL rewrite
+immediately before invoking Git. Its file contains no token value; it reads the
+job's `HOMEBREW_GITHUB_API_TOKEN`. Global Git configuration is preserved, and the
+intrinsic hosted macOS ARM64 guard precedes wrapper creation.

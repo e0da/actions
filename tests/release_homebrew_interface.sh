@@ -136,9 +136,8 @@ require_literal "$workflow" "if: \${{ !cancelled() && inputs.run-homebrew-proof 
 require_literal "$workflow" "CALLER_HOMEBREW_GITHUB_API_TOKEN:"
 require_literal "$workflow" "HOMEBREW_GITHUB_API_TOKEN secret is required for e0da/internal Homebrew proof."
 require_literal "$workflow" "HOMEBREW_GITHUB_API_TOKEN: \${{ inputs.homebrew-tap == 'e0da/internal' && secrets.HOMEBREW_GITHUB_API_TOKEN || '' }}"
-require_literal "$workflow" "GIT_CONFIG_COUNT: \${{ inputs.homebrew-tap == 'e0da/internal' && '1' || '0' }}"
-require_literal "$workflow" "GIT_CONFIG_KEY_0: \${{ inputs.homebrew-tap == 'e0da/internal' && format('url.https://x-access-token:{0}@github.com/.insteadOf', secrets.HOMEBREW_GITHUB_API_TOKEN) || '' }}"
-require_literal "$workflow" "GIT_CONFIG_VALUE_0: \${{ inputs.homebrew-tap == 'e0da/internal' && 'https://github.com/' || '' }}"
+require_literal "$workflow" "name: Configure private tap Git authentication"
+require_literal "$workflow" 'HOMEBREW_GIT='
 require_literal "$workflow" "brew tap \"\$HOMEBREW_TAP\""
 require_literal "$workflow" "brew fetch --force \"\$HOMEBREW_TAP/\$HOMEBREW_FORMULA\""
 require_literal "$workflow" "brew install \"\$HOMEBREW_TAP/\$HOMEBREW_FORMULA\""
@@ -167,10 +166,10 @@ set -eu
 case "$MOCK_AUTH_MODE" in
   private)
     [ "$HOMEBREW_GITHUB_API_TOKEN" = "fixture-token" ] || exit 80
-    [ "${GIT_CONFIG_COUNT:-}" = "1" ] || exit 81
-    [ "${GIT_CONFIG_VALUE_0:-}" = "https://github.com/" ] || exit 82
-    [ "$(git config --get user.name)" = "Existing Runner User" ] || exit 83
-    [ "$(git config --get "$GIT_CONFIG_KEY_0")" = "https://github.com/" ] || exit 84
+    [ -z "${GIT_CONFIG_COUNT:-}" ] || exit 81
+    [ -n "${HOMEBREW_GIT:-}" ] || exit 82
+    [ "$("$HOMEBREW_GIT" config --get user.name)" = "Existing Runner User" ] || exit 83
+    [ "$("$HOMEBREW_GIT" config --get url.https://x-access-token:fixture-token@github.com/.insteadOf)" = "https://github.com/" ] || exit 84
     ;;
   public)
     [ -z "${HOMEBREW_GITHUB_API_TOKEN:-}" ] || exit 85
@@ -184,16 +183,18 @@ exit "${MOCK_BREW_EXIT:-0}"
 EOF
 chmod +x "$fixture_dir/bin/brew"
 
+awk '/# homebrew-private-git:start/ { copying=1; next } /# homebrew-private-git:end/ { copying=0 } copying { sub(/^          /, ""); print }' "$workflow" > "$fixture_dir/setup-private-git.sh"
+[ -s "$fixture_dir/setup-private-git.sh" ] || fail "private Git setup block is required"
+RUNNER_TEMP="$fixture_dir" GITHUB_ENV="$fixture_dir/job-env" HOMEBREW_TAP=e0da/internal sh "$fixture_dir/setup-private-git.sh"
+private_git=$(sed -n 's/^HOMEBREW_GIT=//p' "$fixture_dir/job-env")
+[ -x "$private_git" ] || fail "private Git wrapper must be executable"
+
 run_private_brew() {
   mock_exit="$1"
-  HOME="$fixture_dir/home" \
-    PATH="$fixture_dir/bin:$PATH" \
-    MOCK_BREW_EXIT="$mock_exit" \
-    MOCK_AUTH_MODE=private \
-    HOMEBREW_GITHUB_API_TOKEN=fixture-token \
-    GIT_CONFIG_COUNT=1 \
-    GIT_CONFIG_KEY_0="url.https://x-access-token:fixture-token@github.com/.insteadOf" \
-    GIT_CONFIG_VALUE_0="https://github.com/" \
+  # Homebrew's launcher drops GIT_CONFIG_* but preserves HOMEBREW_* and HOME.
+  env -i HOME="$fixture_dir/home" PATH="$fixture_dir/bin:/usr/bin:/bin" \
+    MOCK_BREW_EXIT="$mock_exit" MOCK_AUTH_MODE=private \
+    HOMEBREW_GITHUB_API_TOKEN=fixture-token HOMEBREW_GIT="$private_git" \
     brew tap e0da/internal
 }
 

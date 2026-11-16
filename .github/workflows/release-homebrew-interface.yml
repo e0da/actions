@@ -751,9 +751,6 @@ jobs:
     env:
       CALLER_HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
       HOMEBREW_GITHUB_API_TOKEN: ${{ inputs.homebrew-tap == 'e0da/internal' && secrets.HOMEBREW_GITHUB_API_TOKEN || '' }}
-      GIT_CONFIG_COUNT: ${{ inputs.homebrew-tap == 'e0da/internal' && '1' || '0' }}
-      GIT_CONFIG_KEY_0: ${{ inputs.homebrew-tap == 'e0da/internal' && format('url.https://x-access-token:{0}@github.com/.insteadOf', secrets.HOMEBREW_GITHUB_API_TOKEN) || '' }}
-      GIT_CONFIG_VALUE_0: ${{ inputs.homebrew-tap == 'e0da/internal' && 'https://github.com/' || '' }}
       HOMEBREW_TAP: ${{ inputs.homebrew-tap }}
       HOMEBREW_FORMULA: ${{ inputs.homebrew-formula }}
       INSTALLED_SMOKE_COMMAND: ${{ inputs.installed-smoke-command }}
@@ -786,6 +783,28 @@ jobs:
             echo "HOMEBREW_GITHUB_API_TOKEN secret is required for e0da/internal Homebrew proof." >&2
             exit 1
           fi
+
+      - name: Configure private tap Git authentication
+        shell: sh
+        run: |
+          set -eu
+          # homebrew-private-git:start
+          if [ "$HOMEBREW_TAP" = "e0da/internal" ]; then
+            private_git="$RUNNER_TEMP/homebrew-private-git"
+            cat > "$private_git" <<'SH'
+          #!/bin/sh
+          set -eu
+          : "${HOMEBREW_GITHUB_API_TOKEN:?private tap token is required}"
+          export GIT_CONFIG_COUNT=1
+          GIT_CONFIG_KEY_0="url.https://x-access-token:${HOMEBREW_GITHUB_API_TOKEN}@github.com/.insteadOf"
+          export GIT_CONFIG_KEY_0
+          export GIT_CONFIG_VALUE_0=https://github.com/
+          exec /usr/bin/git "$@"
+          SH
+            chmod 700 "$private_git"
+            printf 'HOMEBREW_GIT=%s\n' "$private_git" >> "$GITHUB_ENV"
+          fi
+          # homebrew-private-git:end
 
       - name: Tap and fetch formula
         shell: sh
