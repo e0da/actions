@@ -231,42 +231,56 @@ The project cache remains controlled independently by `cache-mode`.
 
 ### `ci-elixir-verified.yml` — opt-in identical-tree native proof reuse
 
-This separate workflow preserves the existing Elixir commands and caches but
-requires the caller to grant `actions: read` as well as `contents: read`.
-Existing `ci-elixir.yml` callers keep their permission and execution contract.
+A hosted admission job verifies prior native evidence before requesting the
+caller's native runner. An explicit verified hit skips the complete native job.
+A miss, unsupported contract, unavailable evidence or verifier failure runs the
+original native commands. The required final `Mix` job accepts only a verified
+hit with native execution skipped, or successful native execution. A failed or
+skipped verifier cannot by itself produce success. Existing `ci-elixir.yml`
+callers retain their permission and execution contract.
 
-Pin the verified workflow to one exact commit SHA in the direct caller and set
-`result-reuse-environment` to the immutable runner image reference, including
-`@sha256:…`. The provider must expose `E0DA_RUNNER_IMAGE_REF` from the same
-pinned value that renders `container.image`; missing or unequal values run native
-checks and cannot create proof. The configured runtime ref is included in the
-key and immutable receipt. This protects rollout coherence, not independent
-runtime attestation: job env and root-writable files can be forged. Actual
-fixture placement/image ID qualification uses an external observer bound to
-both assigned runners. Consumers remain off until the provider seam is reviewed,
-deployed by its owner, and qualified.
-Only exact downloaded OTP/Elixir versions qualify. The image must provide Ruby
-with YAML/JSON and unzip for proof verification. Private-dependency jobs always
-execute. Use this only for commands whose inputs are the checkout tree and this
-execution contract; do not use it for title/review checks, external-link checks,
-release proofs or live environment qualification.
+Pin this workflow to one exact commit SHA and grant `actions: read` plus
+`contents: read`. Set `result-reuse-environment` to the exact immutable image
+reference and `result-reuse-platform` to `Linux-ARM64` or `Linux-X64` for the
+native target. This declared target is independent of the hosted verifier's
+platform. Empty inputs disable reuse. `force-native: true` executes native
+checks without producing a reusable receipt.
 
-The proof key hashes the actual checkout tree (including the PR merge tree), all
-resolved workflow inputs, platform, immutable runtime identity and pinned
-reusable workflow revision. A cached receipt alone never passes the check: the
-API must confirm that its original native job completed successfully and its
-`Run CI` step executed successfully. Failed, cancelled, unfinished or skipped
-proofs execute the native checks. Identity mismatches and API authorization
-failures fail visibly. A reused job cannot mint a new native receipt. Dynamic inputs/names, matrix
-callers, ambiguous names and unrelated producer jobs run native checks instead.
+The actual native provider must expose `E0DA_RUNNER_IMAGE_REF` from the same
+pinned value that renders `container.image`. A missing image ref or mismatched
+native platform/image prevents receipt publication, while native checks still
+run. This protects rollout coherence, not independent runtime attestation:
+job env and root-writable files can be forged. Actual fixture placement/image
+qualification uses an external observer bound to the assigned native runner.
+Consumers remain off until the new admission boundary is reviewed and qualified.
 
-The receipt contains only repository, tree/key, checkout commit, workflow path, run ID and job ID. No build
-outputs or credentials are proof. An unsuccessful receipt occupying an immutable
-cache key causes native execution until that cache expires or is removed.
-GitHub cache scope may prevent reuse across PR refs. This still allocates a
-runner for checkout/proof verification; it targets repeated execution time,
-not runner startup or queue admission. Hosted cold/warm reuse remains required
-before consumer adoption; no execution savings are established by source tests.
+The v5 proof key hashes the actual checkout tree, including the PR merge tree,
+all resolved inputs, target platform, configured immutable runtime identity and
+pinned workflow revision. The verifier requires a successful original native
+job with completed `Run CI`, receipt and immutable artifact upload steps. It
+binds the producer to the same repository, caller, checkout tree, static command
+inputs/defaults and pinned workflow. An exact-key artifact index is only an
+untrusted pointer to that API-verified, job-specific native artifact. Discovery selects the newest active
+index from at most ten exact-name matches with the same source repository; the
+index cannot authorize reuse without the independent producer checks. The
+native job independently recomputes source and actual runtime identity before
+publishing evidence. Reused results never
+mint native receipts.
+
+Only exact downloaded OTP/Elixir toolchains qualify. Private-dependency jobs,
+dynamic inputs/names, matrix callers and ambiguous producers execute native.
+Use reuse only for checkout-and-contract-bound commands; title/review checks,
+external-link checks, release proofs and live environment qualification are not
+eligible. Ruby with YAML/JSON and unzip are needed for hosted verification.
+
+Receipts contain identity metadata, not credentials or build outputs. The proof
+pointer uses `.git/elixir-native-proof.json` in each fresh checkout. Immutable
+artifact transport avoids hosted/native cache compression-version differences
+and can discover proofs across PR refs. An absent or invalid index runs native.
+Index publication is optional and cannot fail otherwise successful native
+execution; successful job-specific attestation remains mandatory for reuse.
+Source tests do not establish hosted latency, avoided queue time or adoption; the
+hosted hit and native fallback paths require separate qualification.
 
 ### `ci-opentofu.yml` — OpenTofu repos
 
