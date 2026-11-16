@@ -30,6 +30,12 @@ testing, or running the caller's smoke command. Build-package installation also
 rejects self-hosted runners when packages are requested; fleet builds use tools
 provisioned outside CI. An empty package list performs no Homebrew operations.
 
+Installed proof can run after a successful build when publication is intentionally
+skipped, so a manual baseline can qualify the currently published formula without
+publishing a candidate. The job condition overrides GitHub's implicit success
+check, requires successful build output, and refuses cancelled runs or a failed
+publisher. Runner provenance and platform checks still run before Homebrew.
+
 Disposable self-hosted macOS guests remain denied until the runner provider
 supplies authenticated, job-bound isolation evidence and the workflow validates
 it. A runner label, alternate prefix, environment flag, or guest-local file does
