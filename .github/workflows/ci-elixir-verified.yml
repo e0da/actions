@@ -1,0 +1,399 @@
+name: Reusable Elixir CI with verified tree reuse
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "GitHub runner label for the Mix job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      otp-version:
+        description: "Erlang/OTP version passed to erlef/setup-beam."
+        required: false
+        type: string
+        default: "28"
+      elixir-version:
+        description: "Elixir version passed to erlef/setup-beam."
+        required: false
+        type: string
+        default: "1.19.5"
+      deps-command:
+        description: "Command that fetches project dependencies."
+        required: false
+        type: string
+        default: "mix deps.get --only test"
+      ci-command:
+        description: "Command that runs the project CI contract."
+        required: false
+        type: string
+        default: "mix ci"
+      cache-mode:
+        description: "Mix dependency cache policy. read-write preserves current behavior; off skips the cache step."
+        required: false
+        type: string
+        default: read-write
+      cache-paths:
+        description: "Mix deps and build directories, relative to the repository root."
+        required: false
+        type: string
+        default: |
+          deps
+          _build
+      cache-lock-files:
+        description: "Lock-file glob hashed for the selected project cache."
+        required: false
+        type: string
+        default: mix.lock
+      toolchain-cache-mode:
+        description: "Downloaded BEAM tool cache: off (default) or read-write. No project build outputs are included."
+        required: false
+        type: string
+        default: "off"
+      toolchain-cache-salt:
+        description: "Optional extra namespace; platform, exact versions and action revision always remain in the key."
+        required: false
+        type: string
+        default: ""
+      result-reuse-environment:
+        description: "Opt-in immutable runner image/runtime identity for identical-tree result reuse. Empty disables reuse; private-dependency jobs always execute. Caller must pin this reusable workflow to one exact SHA."
+        required: false
+        type: string
+        default: ""
+      beam-mode:
+        description: "BEAM setup policy. setup-beam preserves hosted behavior; runner-preinstalled uses erl/elixir/mix already on PATH."
+        required: false
+        type: string
+        default: setup-beam
+    secrets:
+      private_deps_ssh_key:
+        description: "Optional SSH private key for fetching private cross-repo git deps. When unset, the SSH-config step is skipped and behavior is unchanged."
+        required: false
+
+jobs:
+  mix:
+    name: Mix
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      actions: read
+    env:
+      MIX_ENV: test
+      PRIVATE_DEPS_SSH_KEY: ${{ secrets.private_deps_ssh_key }}
+    steps:
+      - name: Validate policy modes
+        env:
+          CACHE_MODE: ${{ inputs.cache-mode }}
+          TOOLCHAIN_CACHE_MODE: ${{ inputs.toolchain-cache-mode }}
+          BEAM_MODE: ${{ inputs.beam-mode }}
+        run: |
+          set -eu
+
+          case "$CACHE_MODE" in
+            read-write|off)
+              ;;
+            *)
+              echo "::error::Unknown cache-mode '${CACHE_MODE}'. Expected one of: read-write, off."
+              exit 1
+              ;;
+          esac
+
+          case "$TOOLCHAIN_CACHE_MODE" in
+            read-write|off) ;;
+            *) echo "::error::Unknown toolchain-cache-mode. Expected read-write or off."; exit 1 ;;
+          esac
+
+          case "$BEAM_MODE" in
+            setup-beam|runner-preinstalled)
+              ;;
+            *)
+              echo "::error::Unknown beam-mode '${BEAM_MODE}'. Expected one of: setup-beam, runner-preinstalled."
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/checkout@v5
+
+      - name: Identify tested tree and execution contract
+        id: proof-key
+        if: inputs.result-reuse-environment != '' && env.PRIVATE_DEPS_SSH_KEY == ''
+        uses: actions/github-script@v8
+        env:
+          REUSE_INPUTS: ${{ toJSON(inputs) }}
+          CALLER_WORKFLOW: ${{ github.workflow_ref }}
+          PROOF_PLATFORM: ${{ runner.os }}-${{ runner.arch }}
+        with:
+          script: |
+            const {execFileSync} = require('node:child_process');
+            const {createHash} = require('node:crypto');
+            const policy = JSON.parse(process.env.REUSE_INPUTS);
+            const runtime = process.env.E0DA_RUNNER_IMAGE_REF;
+            if (!runtime || runtime !== policy['result-reuse-environment']) {
+              core.info('Native execution required: configured runner image ref is missing or mismatched');
+              return;
+            }
+            if (policy['beam-mode'] !== 'setup-beam' || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(policy['otp-version']) || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(policy['elixir-version']) || !/@sha256:[0-9a-f]{64}$/.test(policy['result-reuse-environment'])) {
+              throw new Error('Result reuse requires exact downloaded toolchains and an immutable runtime image digest');
+            }
+            const workflowPath = process.env.CALLER_WORKFLOW.split('@')[0].split('/').slice(2).join('/');
+            const caller = execFileSync('git', ['show', `HEAD:${workflowPath}`], {encoding: 'utf8'});
+            const refs = [...caller.matchAll(/uses:\s*e0da\/actions\/\.github\/workflows\/ci-elixir-verified\.yml@([^\s#]+)/g)].map(m => m[1]);
+            if (!refs.length || refs.some(ref => !/^[0-9a-f]{40}$/.test(ref)) || new Set(refs).size !== 1) {
+              throw new Error('Result reuse requires one immutable ci-elixir-verified workflow revision in the direct caller');
+            }
+            const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {encoding: 'utf8'}).trim();
+            const key = 'elixir-proof-v4-' + createHash('sha256').update(JSON.stringify({tree, runtime, caller: workflowPath, inputs: process.env.REUSE_INPUTS, platform: process.env.PROOF_PLATFORM, workflow: refs[0]})).digest('hex');
+            core.setOutput('key', key);
+            core.setOutput('tree', tree);
+            core.setOutput('checkout', execFileSync('git', ['rev-parse', 'HEAD'], {encoding: 'utf8'}).trim());
+            core.setOutput('workflow', workflowPath);
+            core.setOutput('revision', refs[0]);
+            core.setOutput('runtime', runtime);
+
+      - name: Restore prior native proof
+        id: proof-cache
+        if: steps.proof-key.outputs.key != ''
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/elixir-native-proof.json
+          key: ${{ steps.proof-key.outputs.key }}
+
+      - name: Verify prior successful native job
+        id: proof
+        if: steps.proof-cache.outputs.cache-hit == 'true'
+        uses: actions/github-script@v8
+        env:
+          PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
+          PROOF_KEY: ${{ steps.proof-key.outputs.key }}
+          PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
+          PROOF_RUNTIME: ${{ steps.proof-key.outputs.runtime }}
+          PROOF_WORKFLOW: ${{ steps.proof-key.outputs.workflow }}
+          PROOF_REVISION: ${{ steps.proof-key.outputs.revision }}
+          PROOF_DEFAULTS: '{"runner":"ubuntu-latest","otp-version":"28","elixir-version":"1.19.5","deps-command":"mix deps.get --only test","ci-command":"mix ci","cache-mode":"read-write","cache-paths":"deps\n_build\n","cache-lock-files":"mix.lock","toolchain-cache-mode":"off","toolchain-cache-salt":"","result-reuse-environment":"","beam-mode":"setup-beam"}'
+          REUSE_INPUTS: ${{ toJSON(inputs) }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const {execFileSync} = require('node:child_process');
+            const proof = JSON.parse(fs.readFileSync(process.env.PROOF_FILE, 'utf8'));
+            const reject = async reason => {
+              core.setOutput('reused', 'false');
+              core.info(`Native execution required: ${reason}`);
+              await core.summary.addRaw(`Native execution required: ${reason}`).write();
+            };
+            if (proof.key !== process.env.PROOF_KEY || proof.tree !== process.env.PROOF_TREE || proof.repository !== `${context.repo.owner}/${context.repo.repo}` || proof.runtime !== process.env.PROOF_RUNTIME) return reject('receipt identity mismatch');
+            const {data: job} = await github.rest.actions.getJobForWorkflowRun({...context.repo, job_id: proof.job_id});
+            if (job.run_id !== proof.run_id || job.status !== 'completed' || job.conclusion !== 'success' || !job.steps.some(step => step.name === 'Run CI' && step.status === 'completed' && step.conclusion === 'success')) return reject('prior native job not successful');
+            if (!['Record native execution receipt', 'Attest native receipt as immutable artifact'].every(name => job.steps.some(step => step.name === name && step.status === 'completed' && step.conclusion === 'success'))) return reject('native producer did not record and attest this execution');
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: proof.run_id});
+            if (run.path !== process.env.PROOF_WORKFLOW || proof.workflow !== process.env.PROOF_WORKFLOW || job.head_sha !== run.head_sha) return reject('prior workflow identity mismatch');
+            const {data: commit} = await github.rest.git.getCommit({...context.repo, commit_sha: proof.checkout});
+            if (commit.tree.sha !== process.env.PROOF_TREE) return reject('prior checkout tree mismatch');
+            if (run.event === 'pull_request') {
+              const pr = run.pull_requests.find(pr => pr.head.sha === run.head_sha);
+              if (!pr || commit.parents.length !== 2 || commit.parents[0].sha !== pr.base.sha || commit.parents[1].sha !== pr.head.sha) return reject('prior merge checkout not bound to run head/base');
+            } else if (proof.checkout !== run.head_sha) return reject('prior checkout not bound to run head');
+            const parseYaml = text => JSON.parse(execFileSync('ruby', ['-ryaml', '-rjson', '-e', 'puts JSON.generate(YAML.safe_load($stdin.read, aliases: true))'], {input: text, encoding: 'utf8'}));
+            const caller = parseYaml(execFileSync('git', ['show', `HEAD:${process.env.PROOF_WORKFLOW}`], {encoding: 'utf8'}));
+            const producerRef = `e0da/actions/.github/workflows/ci-elixir-verified.yml@${process.env.PROOF_REVISION}`;
+            if (Object.values(caller.jobs).some(call => typeof call.name === 'string' && call.name.includes('$' + '{{'))) return reject('dynamic job names are not statically bound');
+            const candidates = Object.entries(caller.jobs).filter(([id, call]) => call.uses ? job.name.startsWith(`${call.name || id} / `) : job.name === (call.name || id));
+            if (candidates.length !== 1) return reject('API job is not a unique caller job');
+            const [id, call] = candidates[0];
+            if (call.strategy || job.name !== `${call.name || id} / Mix` || call.uses !== producerRef) return reject('API job is not the pinned native producer');
+            const provided = call.with || {};
+            if (Object.values(provided).some(value => typeof value !== 'string' || value.includes('$' + '{{'))) return reject('producer inputs are not statically bound');
+            const expected = JSON.parse(process.env.PROOF_DEFAULTS);
+            if (Object.keys(provided).some(name => !Object.hasOwn(expected, name))) return reject('undeclared native producer input');
+            Object.assign(expected, provided);
+            const actual = JSON.parse(process.env.REUSE_INPUTS);
+            if (Object.entries(expected).some(([name, value]) => actual[name] !== value)) return reject('native producer commands or inputs differ');
+            const name = `elixir-native-${proof.job_id}-${proof.key}`;
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {...context.repo, run_id: proof.run_id, per_page: 100});
+            const matches = artifacts.filter(a => a.name === name && !a.expired);
+            if (matches.length !== 1) return reject('immutable native artifact absent');
+            const {data: zip} = await github.rest.actions.downloadArtifact({...context.repo, artifact_id: matches[0].id, archive_format: 'zip'});
+            const archive = process.env.PROOF_FILE + '.zip';
+            fs.writeFileSync(archive, Buffer.from(zip));
+            const native = JSON.parse(execFileSync('unzip', ['-p', archive, 'elixir-native-proof.json'], {encoding: 'utf8'}));
+            for (const field of ['key', 'tree', 'runtime', 'repository', 'workflow', 'checkout', 'run_id', 'job_id']) {
+              if (native[field] !== proof[field]) return reject('artifact does not attest cached pointer');
+            }
+            core.setOutput('reused', 'true');
+            core.info(`Reused native proof: ${job.html_url}; tree ${proof.tree}; immutable artifact ${matches[0].id}`);
+            await core.summary.addRaw(`Reused native proof: ${job.html_url}; tree ${proof.tree}; immutable artifact ${matches[0].id}`).write();
+
+      - name: Identify immutable toolchain cache
+        id: beam-platform
+        if: steps.proof.outputs.reused != 'true' && (inputs.beam-mode == 'setup-beam' && inputs.toolchain-cache-mode == 'read-write')
+        env:
+          OTP_VERSION: ${{ inputs.otp-version }}
+          ELIXIR_VERSION: ${{ inputs.elixir-version }}
+        run: |
+          set -eu
+          printf '%s\n' "$OTP_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' || {
+            echo '::error::Toolchain caching requires an exact OTP version, not a range.'; exit 1;
+          }
+          printf '%s\n' "$ELIXIR_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || {
+            echo '::error::Toolchain caching requires an exact Elixir version, not a range.'; exit 1;
+          }
+          if [ -r /etc/os-release ]; then
+            identity="$(sha256sum /etc/os-release | cut -d ' ' -f 1)"
+          elif command -v sw_vers >/dev/null 2>&1; then
+            identity="$(sw_vers | shasum -a 256 | cut -d ' ' -f 1)"
+          else
+            echo '::error::Unsupported toolchain cache platform fingerprint.'; exit 1
+          fi
+          printf 'identity=%s\n' "$identity" >> "$GITHUB_OUTPUT"
+
+      - name: Cache downloaded BEAM tools
+        id: beam-download-cache
+        if: steps.proof.outputs.reused != 'true' && (inputs.beam-mode == 'setup-beam' && inputs.toolchain-cache-mode == 'read-write')
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ runner.tool_cache }}/otp
+            ${{ runner.tool_cache }}/elixir
+          key: beam-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.beam-platform.outputs.identity }}-54075bcc5e249e4758d363f27d099f55d843f124-${{ inputs.otp-version }}-${{ inputs.elixir-version }}-${{ inputs.toolchain-cache-salt }}
+
+      - name: Set up BEAM
+        if: steps.proof.outputs.reused != 'true' && (inputs.beam-mode == 'setup-beam')
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+        with:
+          version-type: ${{ inputs.toolchain-cache-mode == 'read-write' && 'strict' || 'loose' }}
+          otp-version: ${{ inputs.otp-version }}
+          elixir-version: ${{ inputs.elixir-version }}
+
+      - name: Verify preinstalled BEAM
+        if: steps.proof.outputs.reused != 'true' && (inputs.beam-mode == 'runner-preinstalled')
+        run: |
+          set -eu
+
+          command -v erl
+          command -v elixir
+          command -v mix
+
+          erl -version
+          elixir --version
+          mix --version
+
+      - name: Cache Mix deps
+        id: mix-cache
+        if: steps.proof.outputs.reused != 'true' && (inputs.cache-mode == 'read-write')
+        uses: actions/cache@v5
+        with:
+          path: ${{ inputs.cache-paths }}
+          key: mix-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.runner }}-${{ github.workflow }}-otp-${{ inputs.otp-version }}-elixir-${{ inputs.elixir-version }}-${{ hashFiles(inputs.cache-lock-files) }}
+          restore-keys: |
+            mix-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.runner }}-${{ github.workflow }}-otp-${{ inputs.otp-version }}-elixir-${{ inputs.elixir-version }}-
+
+      - name: Report Elixir CI policy
+        env:
+          BEAM_MODE: ${{ inputs.beam-mode }}
+          CACHE_EXACT_KEY_HIT: ${{ steps.mix-cache.outputs.cache-hit }}
+          CACHE_KEY: mix-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.runner }}-${{ github.workflow }}-otp-${{ inputs.otp-version }}-elixir-${{ inputs.elixir-version }}-${{ hashFiles(inputs.cache-lock-files) }}
+          CACHE_MODE: ${{ inputs.cache-mode }}
+          CI_COMMAND: ${{ inputs.ci-command }}
+          DEPS_COMMAND: ${{ inputs.deps-command }}
+          ELIXIR_VERSION: ${{ inputs.elixir-version }}
+          OTP_VERSION: ${{ inputs.otp-version }}
+          RUNNER_LABEL: ${{ inputs.runner }}
+        run: |
+          set -eu
+
+          case "${CACHE_EXACT_KEY_HIT:-}" in
+            true)
+              cache_hit="true"
+              ;;
+            false)
+              cache_hit="false-or-restore-key"
+              ;;
+            *)
+              cache_hit="skipped"
+              ;;
+          esac
+
+          {
+            echo "Elixir CI policy:"
+            echo "- runner: ${RUNNER_LABEL}"
+            echo "- runner_os: ${RUNNER_OS}"
+            echo "- runner_arch: ${RUNNER_ARCH}"
+            echo "- otp_version: ${OTP_VERSION}"
+            echo "- elixir_version: ${ELIXIR_VERSION}"
+            echo "- beam_mode: ${BEAM_MODE}"
+            echo "- cache_mode: ${CACHE_MODE}"
+            echo "- cache_key: ${CACHE_KEY}"
+            echo "- cache_exact_key_hit: ${cache_hit}"
+            echo "- deps_command: ${DEPS_COMMAND}"
+            echo "- ci_command: ${CI_COMMAND}"
+          } | tee /tmp/elixir-ci-policy.txt
+
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## Elixir CI policy"
+              echo
+              echo '```text'
+              cat /tmp/elixir-ci-policy.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Configure private git deps (SSH)
+        if: steps.proof.outputs.reused != 'true' && (env.PRIVATE_DEPS_SSH_KEY != '')
+        env:
+          SSH_KEY: ${{ secrets.private_deps_ssh_key }}
+        run: |
+          set -eu
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/private_deps
+          chmod 600 ~/.ssh/private_deps
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host github.com\n  IdentityFile ~/.ssh/private_deps\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+
+      - name: Install deps
+        if: steps.proof.outputs.reused != 'true'
+        run: ${{ inputs.deps-command }}
+
+      - name: Run CI
+        if: steps.proof.outputs.reused != 'true'
+        env:
+          BEAM_DOWNLOAD_CACHE_HIT: ${{ steps.beam-download-cache.outputs.cache-hit }}
+        run: ${{ inputs.ci-command }}
+
+      - name: Record native execution receipt
+        id: native-receipt
+        if: steps.proof-key.outputs.key != '' && steps.proof.outputs.reused != 'true' && steps.proof-cache.outputs.cache-hit != 'true'
+        uses: actions/github-script@v8
+        env:
+          PROOF_FILE: ${{ runner.temp }}/elixir-native-proof.json
+          PROOF_KEY: ${{ steps.proof-key.outputs.key }}
+          PROOF_TREE: ${{ steps.proof-key.outputs.tree }}
+          PROOF_RUNTIME: ${{ steps.proof-key.outputs.runtime }}
+          PROOF_WORKFLOW: ${{ steps.proof-key.outputs.workflow }}
+          PROOF_CHECKOUT: ${{ steps.proof-key.outputs.checkout }}
+          PROOF_RUNNER: ${{ runner.name }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {...context.repo, run_id: context.runId, attempt_number: Number(process.env.GITHUB_RUN_ATTEMPT), per_page: 100});
+            const matches = jobs.filter(job => job.status === 'in_progress' && job.runner_name === process.env.PROOF_RUNNER);
+            if (matches.length !== 1) throw new Error('Cannot identify the native job uniquely');
+            fs.writeFileSync(process.env.PROOF_FILE, JSON.stringify({key: process.env.PROOF_KEY, tree: process.env.PROOF_TREE, runtime: process.env.PROOF_RUNTIME, repository: `${context.repo.owner}/${context.repo.repo}`, workflow: process.env.PROOF_WORKFLOW, checkout: process.env.PROOF_CHECKOUT, run_id: context.runId, job_id: matches[0].id}));
+            core.setOutput('artifact', `elixir-native-${matches[0].id}-${process.env.PROOF_KEY}`);
+
+      - name: Attest native receipt as immutable artifact
+        if: steps.native-receipt.outputs.artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.native-receipt.outputs.artifact }}
+          path: ${{ runner.temp }}/elixir-native-proof.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+
+      - name: Save native execution receipt
+        if: steps.proof-key.outputs.key != '' && steps.proof.outputs.reused != 'true' && steps.proof-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/elixir-native-proof.json
+          key: ${{ steps.proof-key.outputs.key }}
