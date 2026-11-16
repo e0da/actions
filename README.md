@@ -229,6 +229,36 @@ debug/incremental settings; they do not certify every consumer’s generated inp
 Compare setup, cache-transfer and total job times before opting a caller in.
 The project cache remains controlled independently by `cache-mode`.
 
+### `ci-elixir-verified.yml` — opt-in identical-tree native proof reuse
+
+This separate workflow preserves the existing Elixir commands and caches but
+requires the caller to grant `actions: read` as well as `contents: read`.
+Existing `ci-elixir.yml` callers keep their permission and execution contract.
+
+Pin the verified workflow to one exact commit SHA in the direct caller and set
+`result-reuse-environment` to the immutable runner image reference, including
+`@sha256:…`. The owner must update that identity when the actual runtime changes.
+Only exact downloaded OTP/Elixir versions qualify. Private-dependency jobs always
+execute. Use this only for commands whose inputs are the checkout tree and this
+execution contract; do not use it for title/review checks, external-link checks,
+release proofs or live environment qualification.
+
+The proof key hashes the actual checkout tree (including the PR merge tree), all
+resolved workflow inputs, platform, immutable runtime identity and pinned
+reusable workflow revision. A cached receipt alone never passes the check: the
+API must confirm that its original native job completed successfully and its
+`Run CI` step executed successfully. Failed, cancelled, unfinished or skipped
+proofs execute the native checks. Identity mismatches and API authorization
+failures fail visibly. A reused job cannot mint a new native receipt.
+
+The receipt contains only repository, tree/key, run ID and job ID. No build
+outputs or credentials are proof. An unsuccessful receipt occupying an immutable
+cache key causes native execution until that cache expires or is removed.
+GitHub cache scope may prevent reuse across PR refs. This still allocates a
+runner for checkout/proof verification; it targets repeated execution time,
+not runner startup or queue admission. Hosted cold/warm reuse remains required
+before consumer adoption; no execution savings are established by source tests.
+
 ### `ci-opentofu.yml` — OpenTofu repos
 
 Runs `opentofu/setup-opentofu`, then:
