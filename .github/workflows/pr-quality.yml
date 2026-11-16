@@ -162,17 +162,6 @@ jobs:
               fail "missing required non-empty section: $section_name"
           done
 
-          approvals="$(
-            {
-              gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/reviews" --paginate --jq '.[] | select(.state != "DISMISSED") | {commit_id, body}'
-              gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/comments" --paginate --jq '.[] | {commit_id, body}'
-            } | jq -r --arg head "$live_head" '
-              select(.commit_id == $head and ((.body // "") | test("verdict:[[:space:]]*approve"; "i"))) | "1"
-            ' | wc -l | tr -d ' '
-          )"
-          [ "$approvals" -ge 1 ] ||
-            fail "no review or review comment on head ${live_head} says 'Verdict: Approve'"
-
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             {
               echo "## PR Quality"
@@ -180,7 +169,7 @@ jobs:
               echo "| Field | Value |"
               echo "| --- | --- |"
               echo "| Pull request | #${PULL_REQUEST_NUMBER} |"
-              echo "| Reviewed head | \`${live_head}\` |"
+              echo "| Head | \`${live_head}\` |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

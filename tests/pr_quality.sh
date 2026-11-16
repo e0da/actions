@@ -10,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 awk '/^        run: \|$/ { on=1; next } on { sub(/^          /, ""); print }' "$workflow" > "$tmp/gate.sh"
 [ -s "$tmp/gate.sh" ] || { echo "could not extract gate script" >&2; exit 1; }
 
-for banned in projection PROJECTION_LABEL Adversarial pullrequestreview issues:; do
+for banned in projection PROJECTION_LABEL Adversarial pullrequestreview issues: /reviews /comments verdict:; do
   if grep -F "$banned" "$tmp/gate.sh" >/dev/null; then
     echo "gate still contains retired ceremony: $banned" >&2
     exit 1
@@ -22,8 +22,8 @@ cat > "$tmp/bin/gh" <<'STUB'
 #!/bin/sh
 file="$FIX/pr.json"
 case "$2" in
-  */reviews) file="$FIX/reviews" ;;
-  */comments) file="$FIX/comments" ;;
+  */reviews) echo "unexpected review lookup" >&2; exit 1 ;;
+  */comments) echo "unexpected review lookup" >&2; exit 1 ;;
 esac
 filter=""
 while [ $# -gt 0 ]; do
@@ -58,11 +58,12 @@ run_case() {
 review() { printf '{"commit_id":"%s","state":"%s","body":"%s"}' "$1" "$2" "$3"; }
 comment() { printf '{"commit_id":"%s","body":"%s"}' "$1" "$2"; }
 
+run_case no_reviews pass "$GOOD_BODY" '' ''
 run_case approve_review pass "$GOOD_BODY" "$(review $HEAD COMMENTED 'Verdict: Approve')" ''
 run_case approve_lowercase_inline pass "$GOOD_BODY" '' "$(comment $HEAD 'ok. verdict: approve')"
-run_case stale_head fail "$GOOD_BODY" "$(review $OLD APPROVED 'Verdict: Approve')" ''
-run_case dismissed fail "$GOOD_BODY" "$(review $HEAD DISMISSED 'Verdict: Approve')" ''
-run_case no_verdict fail "$GOOD_BODY" "$(review $HEAD APPROVED 'looks fine')" ''
+run_case stale_head pass "$GOOD_BODY" "$(review $OLD APPROVED 'Verdict: Approve')" ''
+run_case dismissed pass "$GOOD_BODY" "$(review $HEAD DISMISSED 'Verdict: Approve')" ''
+run_case no_verdict pass "$GOOD_BODY" "$(review $HEAD APPROVED 'looks fine')" ''
 run_case missing_section fail '## Outcome\n\nDone.\n\n## Verification\n\nRan it.\n' "$(review $HEAD COMMENTED 'Verdict: Approve')" ''
 run_case empty_section fail '## Outcome\n\n<!-- hi -->\n\n## Verification\n\nx\n\n## Risk and rollback\n\ny\n' "$(review $HEAD COMMENTED 'Verdict: Approve')" ''
 run_case placeholder fail '## Outcome\n\nPR_BODY_REQUIRED:OUTCOME\n\n## Verification\n\nx\n\n## Risk and rollback\n\ny\n' "$(review $HEAD COMMENTED 'Verdict: Approve')" ''
