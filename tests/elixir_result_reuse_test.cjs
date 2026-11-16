@@ -10,14 +10,14 @@ const steps = workflow.jobs.mix.steps;
 const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 function script(name) { return steps.find(s => s.name === name).with.script; }
 const validProof = {key:'k', tree:'t', repository:'e0da/stack', workflow:'.github/workflows/mcog.yml', checkout:'merge', run_id:10, job_id:20};
-async function verify({proof = {...validProof}, job = {run_id:10, name:'mcog / Mix', head_sha:'head', status:'completed', conclusion:'success', steps:['Run CI','Record native execution receipt','Attest native receipt as immutable artifact'].map(name=>({name,status:'completed',conclusion:'success'})), html_url:'proof-url'}, run = {head_sha:'head', path:'.github/workflows/mcog.yml', event:'pull_request', pull_requests:[{head:{sha:'head'},base:{sha:'base'}}]}, commit = {tree:{sha:'t'},parents:[{sha:'base'},{sha:'head'}]}, native = {...validProof}, artifacts, apiError, caller = {jobs:{mcog:{uses:producerRef,with:actualInputs}}}} = {}) {
+async function verify({proof = {...validProof}, job = {run_id:10, name:'mcog / Mix', head_sha:'head', status:'completed', conclusion:'success', steps:['Run CI','Record native execution receipt','Attest native receipt as immutable artifact'].map(name=>({name,status:'completed',conclusion:'success'})), html_url:'proof-url'}, run = {head_sha:'head', path:'.github/workflows/mcog.yml', event:'pull_request', pull_requests:[{head:{sha:'head'},base:{sha:'base'}}]}, commit = {tree:{sha:'t'},parents:[{sha:'base'},{sha:'head'}]}, native = {...validProof}, artifacts, apiError, extraInputs = {}, caller = {jobs:{mcog:{uses:producerRef,with:actualInputs}}}} = {}) {
   const outputs = {};
-  const core = {setOutput:(k,v)=>outputs[k]=v, summary:{addRaw:()=>({write:async()=>{}})}};
+  const core = {info:()=>{},setOutput:(k,v)=>outputs[k]=v, summary:{addRaw:()=>({write:async()=>{}})}};
   const fs = {readFileSync:()=>JSON.stringify(proof),writeFileSync:()=>{}};
   const github = {paginate:async()=>artifacts ?? [{id:30,name:'elixir-native-20-k',expired:false}],rest:{actions:{getJobForWorkflowRun:async()=>{if(apiError)throw Error(apiError);return {data:job};},getWorkflowRun:async()=>({data:run}),listWorkflowRunArtifacts(){},downloadArtifact:async()=>({data:Buffer.from('zip')})},git:{getCommit:async()=>({data:commit})},repos:{getContent:async()=>({data:{content:Buffer.from(JSON.stringify(workflow)).toString('base64')}})}}};
   await new AsyncFunction('require','process','core','github','context', script('Verify prior successful native job'))(
     name => name==='node:fs'?fs:{execFileSync:(program,args,options)=>program==='ruby'?options.input:program==='git'?JSON.stringify(caller):JSON.stringify(native)},
-    {env:{PROOF_FILE:'receipt', PROOF_KEY:'k', PROOF_TREE:'t',PROOF_WORKFLOW:'.github/workflows/mcog.yml',PROOF_REVISION:'a'.repeat(40),PROOF_DEFAULTS:JSON.stringify(Object.fromEntries(Object.entries(schema).map(([k,v])=>[k,v.default]))),REUSE_INPUTS:JSON.stringify(actualInputs)}}, core, github,
+    {env:{PROOF_FILE:'receipt', PROOF_KEY:'k', PROOF_TREE:'t',PROOF_WORKFLOW:'.github/workflows/mcog.yml',PROOF_REVISION:'a'.repeat(40),PROOF_DEFAULTS:JSON.stringify(Object.fromEntries(Object.entries(schema).map(([k,v])=>[k,v.default]))),REUSE_INPUTS:JSON.stringify({...actualInputs,...extraInputs})}}, core, github,
     {repo:{owner:'e0da',repo:'stack'}});
   return outputs.reused;
 }
@@ -35,10 +35,10 @@ test('only verified success bypasses setup and execution',()=>{
  for(const name of ['Record native execution receipt','Save native execution receipt']) assert.match(steps.find(s=>s.name===name).if,/proof-cache.outputs.cache-hit != 'true'/);
 });
 const policy = {'beam-mode':'setup-beam','otp-version':'29.0.2','elixir-version':'1.20.1','result-reuse-environment':'ghcr.io/e0da/runner@sha256:'+'c'.repeat(64)};
-async function identify(refs,tree='tree',platform='Linux-ARM64',inputs=JSON.stringify(policy)) {
+async function identify(refs,tree='tree',platform='Linux-ARM64',inputs=JSON.stringify(policy), workflowPath='.github/workflows/mcog.yml') {
  const out={};
  const fakeRequire=name=>name==='node:child_process'?{execFileSync:(_,args)=>args[0]==='show'?refs.map(ref=>`uses: e0da/actions/.github/workflows/ci-elixir-verified.yml@${ref}`).join('\n'):tree}:require(name);
- await new AsyncFunction('require','process','core',script('Identify tested tree and execution contract'))(fakeRequire,{env:{CALLER_WORKFLOW:'e0da/stack/.github/workflows/mcog.yml@refs/pull/1/merge',REUSE_INPUTS:inputs,PROOF_PLATFORM:platform}},{setOutput:(k,v)=>out[k]=v});return out;
+ await new AsyncFunction('require','process','core',script('Identify tested tree and execution contract'))(fakeRequire,{env:{CALLER_WORKFLOW:`e0da/stack/${workflowPath}@refs/pull/1/merge`,REUSE_INPUTS:inputs,PROOF_PLATFORM:platform}},{setOutput:(k,v)=>out[k]=v});return out;
 }
 test('tree, platform, commands and reusable revision all invalidate proof',async()=>{
  const sha='a'.repeat(40),old=(await identify([sha])).key;
@@ -91,3 +91,9 @@ test('dynamic caller names cannot authorize proof',async()=>assert.equal(await v
 test('producer defaults binding stays identical to workflow input schema',()=>assert.deepEqual(JSON.parse(steps.find(s=>s.id==='proof').env.PROOF_DEFAULTS),Object.fromEntries(Object.entries(schema).map(([k,v])=>[k,v.default]))));
 
 for(const name of ['Record native execution receipt','Attest native receipt as immutable artifact']) test(`skipped producer ${name} cannot attest native execution`,async()=>assert.equal(await verify({job:{run_id:10,head_sha:'head',name:'mcog / Mix',status:'completed',conclusion:'success',steps:['Run CI','Record native execution receipt','Attest native receipt as immutable artifact'].map(n=>({name:n,status:'completed',conclusion:n===name?'skipped':'success'}))}}),'false'));
+
+test('dispatcher context extras do not change statically bound native inputs',async()=>assert.equal(await verify({extraInputs:{qualification:'native-proof'}}),'true'));
+
+test('caller path changes invalidate proof identity',async()=>assert.notEqual((await identify(['a'.repeat(40)])).key,(await identify(['a'.repeat(40)],'tree','Linux-ARM64',JSON.stringify(policy),'.github/workflows/other.yml')).key));
+test('dispatcher context remains in proof identity',async()=>assert.notEqual((await identify(['a'.repeat(40)])).key,(await identify(['a'.repeat(40)],'tree','Linux-ARM64',JSON.stringify({...policy,qualification:'other'}))).key));
+test('caller cannot provide undeclared native inputs',async()=>assert.equal(await verify({extraInputs:{qualification:'native-proof'},caller:{jobs:{mcog:{uses:producerRef,with:{...actualInputs,qualification:'native-proof'}}}}}),'false'));
