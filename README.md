@@ -200,6 +200,35 @@ experiments.
 Callers can override `runner`, `otp-version`, `elixir-version`,
 `deps-command`, `ci-command`, `cache-mode`, and `beam-mode`.
 
+Nested Mix projects can set `cache-paths` to their `deps` and `_build`
+directories and `cache-lock-files` to their lock-file glob. Defaults retain the
+repository-root project layout. Project cache keys include architecture, runner
+label, workflow, OTP and Elixir versions; restore prefixes keep those boundaries.
+The dependency and CI commands still run on every cache hit. For example:
+
+```yaml
+cache-mode: read-write
+cache-paths: |
+  elixir/mcog/deps
+  elixir/mcog/_build
+cache-lock-files: elixir/mcog/mix.lock
+```
+
+`toolchain-cache-mode: read-write` optionally retains only setup-beam’s
+downloaded/extracted OTP and Elixir tools. It defaults to `off`; no existing caller
+is opted in. Strict resolution of exact version inputs, OS/architecture, OS release and the pinned
+setup-beam revision partition this cache, with no broad fallback. GitHub keeps
+cache access repository/branch scoped. Project source, `_build`, credentials and
+test databases are not included in this new cache. `toolchain-cache-salt` adds a
+namespace without removing those identity fields.
+
+The paired `Qualify BEAM download cache` jobs require a fresh miss followed by an
+exact hit and run identical bounded compile/invalidation controls. These controls
+cover source, compile-time configuration and a path dependency under default
+debug/incremental settings; they do not certify every consumer’s generated inputs.
+Compare setup, cache-transfer and total job times before opting a caller in.
+The project cache remains controlled independently by `cache-mode`.
+
 ### `ci-opentofu.yml` — OpenTofu repos
 
 Runs `opentofu/setup-opentofu`, then:
