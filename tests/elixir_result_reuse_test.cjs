@@ -235,3 +235,9 @@ test('newest active exact-key index is selected',async()=>{
  const make=id=>({id,name:'elixir-proof-index-k',expired:false,workflow_run:{head_repository_id:1}});
  const {calls}=await findIndex({artifacts:[make(10),make(30),make(20)]});assert.equal(calls[1].artifact_id,30);
 });
+
+test('index creation time wins when artifact IDs are not chronological',async()=>{
+ const make=(id,created_at)=>({id,created_at,name:'elixir-proof-index-k',expired:false,workflow_run:{head_repository_id:1}});
+ const {calls}=await findIndex({artifacts:[make(30,'2026-11-16T11:00:00Z'),make(10,'2026-11-16T11:01:00Z')]});
+ assert.equal(calls[1].artifact_id,10);
+});

@@ -151,7 +151,7 @@ jobs:
             const {execFileSync} = require('node:child_process');
             const name = `elixir-proof-index-${process.env.PROOF_KEY}`;
             const {data} = await github.rest.actions.listArtifactsForRepo({...context.repo, name, per_page: 10});
-            const matches = data.artifacts.filter(a => a.name === name && !a.expired && a.workflow_run?.head_repository_id === context.payload.repository.id).sort((a, b) => b.id - a.id);
+            const matches = data.artifacts.filter(a => a.name === name && !a.expired && a.workflow_run?.head_repository_id === context.payload.repository.id).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
             if (!matches.length) {
               core.setOutput('found', 'false');
               core.info('Native execution required: no active proof index for this repository and key');
