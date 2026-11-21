@@ -374,9 +374,11 @@ policy belongs here.
 
 ### `release-own-assets.yml` — release to the calling repository
 
-Releases through this workflow need no configured secrets. Call it from a tag-push workflow with `contents: write`, a build runner and a POSIX build command. The command uses the caller's mise pins, runs its smoke tests and puts the release files in `$RUNNER_TEMP/dist`. The publish job uses the caller's GitHub token to attach those files to its own release.
+```sh
+brew install e0da/internal/agency
+```
 
-For Agency, the tap bump runs locally with `agency release bump <version>` using the operator's existing `gh` login.
+See the [Agency Homebrew guide](https://github.com/e0da/agency/blob/main/docs/homebrew-release.md).
 
 ### `release-homebrew-interface.yml` — Homebrew release-interface proof
 
