@@ -372,6 +372,14 @@ runner image owns the requested BEAM version. Service repos should keep only a
 thin release caller and app-owned Dockerfile/release scripts; shared release
 policy belongs here.
 
+### `release-own-assets.yml` — release to the calling repository
+
+```sh
+brew install e0da/internal/agency
+```
+
+See the [Agency Homebrew guide](https://github.com/e0da/agency/blob/main/docs/homebrew-release.md).
+
 ### `release-homebrew-interface.yml` — Homebrew release-interface proof
 
 Reusable release workflow for active non-service products that expose an
