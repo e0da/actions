@@ -118,10 +118,15 @@ on:
         type: string
         default: ""
       release-notes-file:
-        description: "Optional source-repository Markdown file included in release notes before provenance; a configured file must be non-empty."
+        description: "Source-repository Markdown appended before provenance by default. A configured file must be nonempty."
         required: false
         type: string
         default: ""
+      release-notes-file-only:
+        description: "Use the required release-notes-file for the changes section and skip GitHub-generated notes."
+        required: false
+        type: boolean
+        default: false
       release-access-scope:
         description: "Human-readable distribution access scope recorded in the release provenance."
         required: false
@@ -500,6 +505,7 @@ jobs:
           RELEASE_NOTES_START_TAG: ${{ inputs.release-notes-start-tag }}
           RELEASE_ACCESS_SCOPE: ${{ inputs.release-access-scope }}
           RELEASE_NOTES_FILE: ${{ inputs.release-notes-file }}
+          RELEASE_NOTES_FILE_ONLY: ${{ inputs.release-notes-file-only }}
           SOURCE_TAG: ${{ steps.release-tag.outputs.source-tag }}
           SOURCE_TAG_PREFIX: ${{ inputs.source-tag-prefix }}
         run: |
@@ -538,25 +544,31 @@ jobs:
 
           # release-notes-baseline-script:end
 
-          if [ -n "$previous_tag" ]; then
-            generated=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-              -f tag_name="$GITHUB_REF_NAME" \
-              -f target_commitish="$GITHUB_SHA" \
-              -f previous_tag_name="$previous_tag")
-          else
-            generated=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-              -f tag_name="$GITHUB_REF_NAME" \
-              -f target_commitish="$GITHUB_SHA")
+          if [ -n "$RELEASE_NOTES_FILE" ] || [ "$RELEASE_NOTES_FILE_ONLY" = true ]; then
+            [ -s "$RELEASE_NOTES_FILE" ] || {
+              echo "configured release-notes-file is missing or empty: $RELEASE_NOTES_FILE" >&2
+              exit 1
+            }
           fi
-          generated_body=$(printf '%s' "$generated" | jq -r '.body')
-          [ -n "$generated_body" ] && [ "$generated_body" != null ] || {
-            echo "GitHub generated an empty source release-note body" >&2
-            exit 1
-          }
+
           {
             echo "## Changes"
             echo
-            printf '%s\n' "$generated_body"
+            if [ "$RELEASE_NOTES_FILE_ONLY" = true ]; then
+              cat "$RELEASE_NOTES_FILE"
+            else
+              set -- -f tag_name="$GITHUB_REF_NAME" -f target_commitish="$GITHUB_SHA"
+              if [ -n "$previous_tag" ]; then
+                set -- "$@" -f previous_tag_name="$previous_tag"
+              fi
+              generated=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" "$@")
+              generated_body=$(printf '%s' "$generated" | jq -r '.body')
+              [ -n "$generated_body" ] && [ "$generated_body" != null ] || {
+                echo "GitHub generated an empty source release-note body" >&2
+                exit 1
+              }
+              printf '%s\n' "$generated_body"
+            fi
             echo
             echo "## Upgrade scope"
             if [ -n "$previous_tag" ]; then
@@ -565,16 +577,10 @@ jobs:
               echo "Compare: initial release...$GITHUB_REF_NAME"
             fi
             echo
-            # caller-release-notes-script:start
-            if [ -n "${RELEASE_NOTES_FILE:-}" ]; then
-              if [ ! -s "$RELEASE_NOTES_FILE" ]; then
-                echo "configured release-notes-file is missing or empty: $RELEASE_NOTES_FILE" >&2
-                exit 1
-              fi
+            if [ "$RELEASE_NOTES_FILE_ONLY" = false ] && [ -n "$RELEASE_NOTES_FILE" ]; then
               cat "$RELEASE_NOTES_FILE"
               echo
             fi
-            # caller-release-notes-script:end
             echo "## Provenance"
             echo "Source: $GITHUB_REPOSITORY@$GITHUB_SHA"
             echo "Source tag: $GITHUB_REF_NAME"

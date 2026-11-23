@@ -272,16 +272,76 @@ echo "release homebrew interface workflow ok"
 
 notes_test_dir="$fixture_dir/notes"
 mkdir "$notes_test_dir"
-awk '/# caller-release-notes-script:start/ { copying=1; next } /# caller-release-notes-script:end/ { copying=0 } copying { sub(/^            /, ""); print }' "$workflow" > "$notes_test_dir/append.sh"
-[ -s "$notes_test_dir/append.sh" ] || fail "caller release-note append script is required"
-RELEASE_NOTES_FILE='' sh "$notes_test_dir/append.sh" > "$notes_test_dir/empty"
-[ ! -s "$notes_test_dir/empty" ] || fail "unconfigured caller notes must preserve existing output"
-printf '%s\n' '## Version decision' '0.2.0: fixes only, E0D-2043.' > "$notes_test_dir/decision.md"
-RELEASE_NOTES_FILE="$notes_test_dir/decision.md" sh "$notes_test_dir/append.sh" > "$notes_test_dir/output"
-grep -qF '0.2.0: fixes only, E0D-2043.' "$notes_test_dir/output" || fail "caller version decision must reach release notes"
-if RELEASE_NOTES_FILE="$notes_test_dir/missing.md" sh "$notes_test_dir/append.sh" > /dev/null 2>&1; then
-  fail "configured missing release notes must fail before publication"
+awk '
+  /^      - name: Generate source release notes$/ { step = 1; next }
+  /^      - name:/ && step { exit }
+  step && /^        run: \|$/ { script = 1; next }
+  script { sub(/^          /, ""); print }
+' "$workflow" > "$notes_test_dir/compose.sh"
+[ -s "$notes_test_dir/compose.sh" ] || fail "release-note composition script is required"
+git -C "$notes_test_dir" init -q
+git -C "$notes_test_dir" -c user.name=Fixture -c user.email=fixture@example.com commit -qm baseline --allow-empty
+git -C "$notes_test_dir" tag v0.2.0
+printf '%s\n' 'A user-facing change summary.' > "$notes_test_dir/decision.md"
+: > "$notes_test_dir/empty.md"
+
+cat > "$fixture_dir/bin/gh" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "$RELEASE_NOTES_FILE_ONLY" = true ]; then
+  echo 'file-only notes must not call the GitHub generator' >&2
+  exit 96
 fi
-if RELEASE_NOTES_FILE="$notes_test_dir/empty" sh "$notes_test_dir/append.sh" > /dev/null 2>&1; then
-  fail "configured empty release notes must fail before publication"
+printf '%s\n' '{"body":"Generated changes: https://github.com/e0da/private-source/pull/1"}'
+EOF
+chmod +x "$fixture_dir/bin/gh"
+
+compose_notes() (
+  cd "$notes_test_dir"
+  PATH="$fixture_dir/bin:$PATH" \
+    RELEASE_NOTES_FILE_ONLY="$1" RELEASE_NOTES_FILE="$2" \
+    RELEASE_NOTES_START_TAG="${3-v0.2.0}" RELEASE_ACCESS_SCOPE=public SOURCE_TAG_PREFIX='' \
+    SOURCE_TAG=v0.2.1 GITHUB_REF_NAME=v0.2.1 GITHUB_REPOSITORY=e0da/private-source GITHUB_SHA=abc123 \
+    sh compose.sh
+)
+
+compose_notes false ''
+require_literal "$notes_test_dir/release-notes.md" 'Generated changes:'
+reject_literal "$notes_test_dir/release-notes.md" 'A user-facing change summary.'
+compose_notes false decision.md
+require_literal "$notes_test_dir/release-notes.md" 'Generated changes:'
+require_literal "$notes_test_dir/release-notes.md" 'A user-facing change summary.'
+
+compose_notes true decision.md
+reject_literal "$notes_test_dir/release-notes.md" 'https://github.com/e0da/private-source'
+cat > "$notes_test_dir/expected.md" <<'EOF'
+## Changes
+
+A user-facing change summary.
+
+## Upgrade scope
+Compare: v0.2.0...v0.2.1
+
+## Provenance
+Source: e0da/private-source@abc123
+Source tag: v0.2.1
+Access scope: public
+EOF
+diff -u "$notes_test_dir/expected.md" "$notes_test_dir/release-notes.md"
+
+for notes_mode in false true; do
+  for invalid_file in missing.md empty.md; do
+    if compose_notes "$notes_mode" "$invalid_file" > "$notes_test_dir/error" 2>&1; then
+      fail "configured missing or empty release notes must fail before publication"
+    fi
+    require_literal "$notes_test_dir/error" 'release-notes-file is missing or empty'
+  done
+done
+if compose_notes true '' > "$notes_test_dir/error" 2>&1; then
+  fail "file-only notes must require a release-notes-file"
 fi
+require_literal "$notes_test_dir/error" 'release-notes-file is missing or empty'
+if compose_notes true decision.md v0.1.9 > "$notes_test_dir/error" 2>&1; then
+  fail "file-only notes must validate the baseline tag"
+fi
+require_literal "$notes_test_dir/error" 'derived SemVer release-notes baseline is absent'
