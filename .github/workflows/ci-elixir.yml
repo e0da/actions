@@ -56,7 +56,7 @@ on:
         type: string
         default: ""
       beam-mode:
-        description: "BEAM setup policy. setup-beam preserves hosted behavior; runner-preinstalled uses erl/elixir/mix already on PATH."
+        description: "BEAM setup policy. setup-beam preserves hosted behavior; runner-preinstalled uses BEAM on PATH; mise uses the caller configuration and requires cache-mode off."
         required: false
         type: string
         default: setup-beam
@@ -98,15 +98,38 @@ jobs:
           esac
 
           case "$BEAM_MODE" in
-            setup-beam|runner-preinstalled)
+            setup-beam|runner-preinstalled|mise)
               ;;
             *)
-              echo "::error::Unknown beam-mode '${BEAM_MODE}'. Expected one of: setup-beam, runner-preinstalled."
+              echo "::error::Unknown beam-mode '${BEAM_MODE}'. Expected one of: setup-beam, runner-preinstalled, mise."
               exit 1
               ;;
           esac
 
+          if [ "$BEAM_MODE" = mise ] && { [ "$CACHE_MODE" != off ] || [ "$TOOLCHAIN_CACHE_MODE" != off ]; }; then
+            echo "::error::mise requires both cache modes to be off."
+            exit 1
+          fi
+
       - uses: actions/checkout@v5
+
+      - name: Isolate mise from runner state
+        if: inputs.beam-mode == 'mise'
+        run: |
+          mise_root="$(mktemp -d "$RUNNER_TEMP/elixir-mise.XXXXXX")"
+          {
+            echo "MISE_DATA_DIR=$mise_root/data"
+            echo "MISE_CACHE_DIR=$mise_root/cache"
+            echo "MISE_CONFIG_DIR=$mise_root/config"
+            echo "MISE_STATE_DIR=$mise_root/state"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up mise
+        if: inputs.beam-mode == 'mise'
+        uses: jdx/mise-action@c1ecc8f748cd28cdeabf76dab3cccde4ce692fe4 # v4.0.0
+        with:
+          version: 2026.11.12
+          cache: false
 
       - name: Identify immutable toolchain cache
         id: beam-platform
@@ -186,6 +209,12 @@ jobs:
         run: |
           set -eu
 
+          if [ "$BEAM_MODE" = mise ]; then
+            OTP_VERSION="$(mise current erlang)"
+            ELIXIR_VERSION="$(mise current elixir)"
+            CACHE_KEY="disabled"
+          fi
+
           case "${CACHE_EXACT_KEY_HIT:-}" in
             true)
               cache_hit="true"
@@ -211,14 +240,14 @@ jobs:
             echo "- cache_exact_key_hit: ${cache_hit}"
             echo "- deps_command: ${DEPS_COMMAND}"
             echo "- ci_command: ${CI_COMMAND}"
-          } | tee /tmp/elixir-ci-policy.txt
+          } | tee "$RUNNER_TEMP/elixir-ci-policy.txt"
 
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             {
               echo "## Elixir CI policy"
               echo
               echo '```text'
-              cat /tmp/elixir-ci-policy.txt
+              cat "$RUNNER_TEMP/elixir-ci-policy.txt"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -236,9 +265,11 @@ jobs:
           printf 'Host github.com\n  IdentityFile ~/.ssh/private_deps\n  IdentitiesOnly yes\n' >> ~/.ssh/config
 
       - name: Install deps
+        shell: ${{ inputs.beam-mode == 'mise' && 'mise exec -- bash -e {0}' || 'bash -e {0}' }}
         run: ${{ inputs.deps-command }}
 
       - name: Run CI
+        shell: ${{ inputs.beam-mode == 'mise' && 'mise exec -- bash -e {0}' || 'bash -e {0}' }}
         env:
           BEAM_DOWNLOAD_CACHE_HIT: ${{ steps.beam-download-cache.outputs.cache-hit }}
         run: ${{ inputs.ci-command }}
