@@ -10,14 +10,11 @@ identifiers such as `-pre`, `-alpha`, and `-beta.42` describe the selected
 release stage without pre-allocating a future stable version.
 
 Every published release must be built from a tag on integrated trunk, carry
-checksummed immutable assets, have source-generated notes and immutable source
+checksummed immutable assets, have source-authored notes and immutable source
 provenance, and prove the installed distribution surface. A retry may reconcile
 missing assets, but may not replace published bytes or silently rewrite notes.
 
-When the destination release repository differs from the source repository,
-notes are generated against the source repository, not the tap. The body names
-the source repository, source tag, immutable source commit, destination tag,
-and configured access scope.
+GitHub generates notes against the source repository by default. Callers can supply the changes section through a checked-in notes file when readers cannot access generated source links. The body names the source repository, source tag, immutable source commit, destination tag, and configured access scope.
 
 The reusable workflow is the enforcement owner. Its contract tests must cover
 every required behavior in this document.
