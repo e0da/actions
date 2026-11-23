@@ -265,11 +265,23 @@ jobs:
           printf 'Host github.com\n  IdentityFile ~/.ssh/private_deps\n  IdentitiesOnly yes\n' >> ~/.ssh/config
 
       - name: Install deps
-        shell: ${{ inputs.beam-mode == 'mise' && 'mise exec -- bash -e {0}' || 'bash -e {0}' }}
+        if: inputs.beam-mode != 'mise'
+        run: ${{ inputs.deps-command }}
+
+      - name: Install deps with mise
+        if: inputs.beam-mode == 'mise'
+        shell: mise exec -- bash -e {0}
         run: ${{ inputs.deps-command }}
 
       - name: Run CI
-        shell: ${{ inputs.beam-mode == 'mise' && 'mise exec -- bash -e {0}' || 'bash -e {0}' }}
+        if: inputs.beam-mode != 'mise'
+        env:
+          BEAM_DOWNLOAD_CACHE_HIT: ${{ steps.beam-download-cache.outputs.cache-hit }}
+        run: ${{ inputs.ci-command }}
+
+      - name: Run CI with mise
+        if: inputs.beam-mode == 'mise'
+        shell: mise exec -- bash -e {0}
         env:
           BEAM_DOWNLOAD_CACHE_HIT: ${{ steps.beam-download-cache.outputs.cache-hit }}
         run: ${{ inputs.ci-command }}

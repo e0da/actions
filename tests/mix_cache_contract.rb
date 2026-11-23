@@ -29,9 +29,10 @@ class MixCacheContract < Minitest::Test
   def test_cache_does_not_replace_dependency_resolution_or_checks
     assert_equal "inputs.cache-mode == 'read-write'", @cache.fetch('if')
     %w[deps-command ci-command].each do |input|
-      step = @steps.find { |entry| entry['run'] == "${{ inputs.#{input} }}" }
-      refute_nil step
-      refute step.key?('if')
+      steps = @steps.select { |entry| entry['run'] == "${{ inputs.#{input} }}" }
+      assert_equal ["inputs.beam-mode != 'mise'", "inputs.beam-mode == 'mise'"],
+                   steps.map { |step| step.fetch('if') }
+      assert_equal 'mise exec -- bash -e {0}', steps.last.fetch('shell')
     end
   end
 end
